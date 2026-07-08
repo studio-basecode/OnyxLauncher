@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="onyx_primary">#00E676</color>
+    <color name="onyx_secondary">#1DE9B6</color>
+    <color name="onyx_background">#121212</color>
+    <color name="onyx_text">#FFFFFF</color>
+    <color name="background_status_bar">#0F172A</color>
+    <color name="background_app">#0F172A</color>
+    <color name="divider">#0F172A</color>
+    <color name="background_overlay">#0F172A</color>
+    <color name="minebutton_color">#0F172A</color>
+    <color name="control_button_pressed_color">#0F172A</color>
+
+    <color name="primary_text">#4CAF50</color>
+    <color name="control_button_color">#4CAF50</color>
+    <color name="background_bottom_bar">#4CAF50</color>
+</resources>

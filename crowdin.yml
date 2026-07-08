@@ -1,0 +1,4 @@
+files:
+  - source: /app_onyxlauncher/src/main/res/values/strings.xml
+    translation: /app_onyxlauncher/src/main/res/values-%android_code%/%original_file_name%
+

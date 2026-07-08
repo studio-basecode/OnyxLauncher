@@ -1,0 +1,23 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        google()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven { url "https://jitpack.io" }
+    }
+}
+
+rootProject.name='OnyxLauncher'
+include ':jre_engine'
+include ':cacio_compat'
+include ':app_onyxlauncher'
+
+include ':arc_dns_injector'
+include ':forge_installer'

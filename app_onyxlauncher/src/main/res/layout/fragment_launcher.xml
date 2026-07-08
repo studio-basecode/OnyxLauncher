@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+	android:layout_width="match_parent"
+	android:layout_height="match_parent"
+	android:background="#0F172A"> <TextView
+	android:id="@+id/welcome_text"
+	android:layout_width="wrap_content"
+	android:layout_height="wrap_content"
+	android:layout_centerHorizontal="true"
+	android:layout_marginTop="100dp"
+	android:text="@string/welcome_to_onyx"
+	android:textColor="#F8FAFC"
+	android:textSize="28sp"
+	android:textStyle="bold" />
+
+	<TextView
+		android:id="@+id/subtitle_text"
+		android:layout_width="wrap_content"
+		android:layout_height="wrap_content"
+		android:layout_below="@id/welcome_text"
+		android:layout_centerHorizontal="true"
+		android:layout_marginTop="8dp"
+		android:text="@string/your_own_minecraft_client"
+		android:textColor="#94A3B8"
+		android:textSize="16sp" />
+
+	<Button
+		android:id="@+id/play_button"
+		android:layout_width="250dp"
+		android:layout_height="65dp"
+		android:layout_centerInParent="true"
+		android:backgroundTint="#107C10"
+		android:text="@string/button_run_game"
+		android:textColor="#FFFFFF"
+		android:textSize="18sp"
+		android:textStyle="bold" />
+
+</RelativeLayout>

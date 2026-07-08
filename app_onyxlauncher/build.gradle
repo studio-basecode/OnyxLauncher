@@ -1,0 +1,274 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+static def getDate() { return new Date().format('yyyyMMdd') }
+
+static def getDateSeconds() {
+    if (System.getenv("GITHUB_ACTIONS") == "true") {
+        return 9934841 + Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER"))
+    } else {
+        return 2
+    }
+}
+
+
+def getVersionName = {
+    // Get the last version tag, as well as the short head of the last commit
+    ByteArrayOutputStream TAG = new ByteArrayOutputStream()
+    ByteArrayOutputStream BRANCH = new ByteArrayOutputStream()
+    // Used by the fallback for github actions
+    ByteArrayOutputStream TAG_PART_COMMIT = new ByteArrayOutputStream()
+    String TAG_STRING
+
+    exec {
+        try {
+            commandLine 'git', 'describe', '--tags'
+            ignoreExitValue true
+            standardOutput = TAG
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    if (TAG.toString() == "") {
+        exec {
+            // Fallback for action builds
+            try {
+                commandLine 'git', 'describe', '--always', '--tags'
+                ignoreExitValue true
+                standardOutput = TAG_PART_COMMIT
+            } catch (Exception e) {
+            }
+        }
+    }
+
+
+    if(TAG.toString() != ""){
+        TAG_STRING = TAG.toString()
+    }else {
+        if(TAG_PART_COMMIT.toString().trim() == ""){
+             //Fallback no repo
+            return ("LOCAL-" + "${getDate()}")
+        }else {
+            // Used by github actions
+            TAG_STRING =  'gladiolus-' + "${getDate()}" + "-" + TAG_PART_COMMIT.toString().trim()
+        }
+
+    }
+
+    exec {
+        try {
+            commandLine 'git', 'branch', '--show-current'
+            ignoreExitValue true
+            standardOutput = BRANCH
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    return TAG_STRING.trim().replace("-g", "-") + "-" + BRANCH.toString().trim()
+}
+
+def getLocalProperty = { String propertyName ->
+    File localPropertiesFile = rootProject.file("local.properties");
+    if(!localPropertiesFile.canRead()) return null;
+    Properties properties = new Properties();
+    localPropertiesFile.withInputStream { stream -> properties.load(stream) }
+    String value = properties.getProperty(propertyName);
+    return value == null ? null : value.trim();
+}
+
+def getCurseforgeAccess = {
+    String proxyUrl = System.getenv("CURSEFORGE_PROXY_URL");
+    if(proxyUrl != null && !proxyUrl.trim().isEmpty()) return proxyUrl.trim();
+    String proxyProperty = findProperty("curseforgeProxyUrl");
+    if(proxyProperty != null && !proxyProperty.trim().isEmpty()) return proxyProperty.trim();
+    String localProxy = getLocalProperty("curseforge.proxy.url");
+    if(localProxy != null && !localProxy.trim().isEmpty()) return localProxy.trim();
+    String key = System.getenv("CURSEFORGE_API_KEY");
+    if(key != null && !key.trim().isEmpty()) return key.trim();
+    String keyProperty = findProperty("curseforgeApiKey");
+    if(keyProperty != null && !keyProperty.trim().isEmpty()) return keyProperty.trim();
+    String localKey = getLocalProperty("curseforge.api.key");
+    if(localKey != null && !localKey.trim().isEmpty()) return localKey.trim();
+    List<File> curseforgeKeyFiles = [
+            rootProject.file("curseforge_key.txt"),
+            project.file("curseforge_key.txt"),
+            file("../curseforge_key.txt")
+    ];
+    for(File curseforgeKeyFile : curseforgeKeyFiles) {
+        if(curseforgeKeyFile.canRead() && curseforgeKeyFile.isFile()) {
+            String value = curseforgeKeyFile.text.trim();
+            if(!value.isEmpty()) return value;
+        }
+    }
+    logger.warn('BUILD: No CurseForge API key or proxy URL configured. CurseForge API requests may be unavailable.');
+    return "";
+}
+
+configurations {
+    instrumentedClasspath {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+}
+
+android {
+    namespace 'com.cannon.onyxlauncher'
+
+    compileSdk = 35
+
+    lintOptions {
+        abortOnError false
+    }
+
+    signingConfigs {
+        googlePlayBuild {
+            storeFile file("upload.jks")
+            storePassword System.getenv("GPLAY_KEYSTORE_PASSWORD")
+            keyAlias "upload"
+            keyPassword System.getenv("GPLAY_KEYSTORE_PASSWORD")
+        }
+    }
+
+
+    defaultConfig {
+        applicationId "com.cannon.onyxlauncher"
+        minSdkVersion 21
+        targetSdkVersion 35
+        versionCode getDateSeconds()
+        versionName getVersionName()
+        multiDexEnabled true //important
+        resValue 'string', 'curseforge_api_key', getCurseforgeAccess()
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix '.debug'
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            resValue 'string', 'application_package', 'com.cannon.onyxlauncher.debug'
+            resValue 'string', 'storageProviderAuthorities', 'com.cannon.onyxlauncher.scoped.gamefolder.debug'
+            resValue 'string', 'shareProviderAuthority', 'com.cannon.onyxlauncher.scoped.controlfolder.debug'
+        }
+        proguard {
+            initWith debug
+            minifyEnabled true
+            shrinkResources true
+            debuggable false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        proguardNoDebug {
+            initWith proguard
+            debuggable false
+        }
+
+        release {
+            minifyEnabled true
+            shrinkResources true
+            debuggable false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            resValue 'string', 'storageProviderAuthorities', 'com.cannon.onyxlauncher.scoped.gamefolder'
+            resValue 'string', 'application_package', 'com.cannon.onyxlauncher'
+        }
+        gplay {
+            initWith release
+            signingConfig signingConfigs.googlePlayBuild
+        }
+    }
+
+    ndkVersion = "25.2.9519653"
+
+    externalNativeBuild {
+        ndkBuild {
+            path file('src/main/jni/Android.mk')
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    bundle {
+        language {
+            enableSplit = false
+        }
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging = true
+            keepDebugSymbols += ['**/libvulkan_freedreno.so']
+        }
+        pickFirst '**/libbytehook.so'
+    }
+
+    buildFeatures {
+        prefab true
+        buildConfig true
+        compose true
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildToolsVersion = '34.0.0'
+}
+
+afterEvaluate {
+    def runtimeJarTasks = [":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar"]
+    tasks.configureEach { task ->
+        if (task.name.startsWith("merge") && task.name.endsWith("Assets")) {
+            task.dependsOn(runtimeJarTasks)
+        }
+        if (task.name.toLowerCase(Locale.ROOT).contains("lint")) {
+            task.dependsOn(runtimeJarTasks)
+        }
+    }
+}
+
+dependencies {
+    implementation 'javax.annotation:javax.annotation-api:1.3.2'
+    implementation 'commons-codec:commons-codec:1.15'
+    implementation 'androidx.preference:preference:1.2.0'
+    implementation 'androidx.drawerlayout:drawerlayout:1.2.0'
+    implementation 'androidx.viewpager2:viewpager2:1.1.0-beta01'
+    implementation 'androidx.annotation:annotation:1.5.0'
+    implementation "androidx.constraintlayout:constraintlayout:2.1.4"
+
+    implementation 'com.github.duanhong169:checkerboarddrawable:1.0.2'
+    implementation 'com.github.PojavLauncherTeam:portrait-sdp:ed33e89cbc'
+    implementation 'com.github.PojavLauncherTeam:portrait-ssp:6c02fd739b'
+    implementation 'com.github.Mathias-Boulay:ExtendedView:1.0.0'
+    implementation 'com.github.Mathias-Boulay:android_gamepad_remapper:2.0.3'
+    implementation 'com.github.Mathias-Boulay:virtual-joystick-android:1.14'
+
+    implementation 'org.tukaani:xz:1.8'
+    implementation 'net.sourceforge.htmlcleaner:htmlcleaner:2.6.1'
+    implementation 'com.bytedance:bytehook:1.0.9'
+
+    implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
+
+    // --- DODANE DLA ONYX LAUNCHER (JETPACK COMPOSE I KOTLIN) ---
+    def composeBom = platform('androidx.compose:compose-bom:2024.10.00')
+    implementation composeBom
+    androidTestImplementation composeBom
+
+    implementation 'androidx.core:core-ktx:1.15.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.6'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-graphics'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.compose.runtime:runtime'
+    implementation 'androidx.compose.foundation:foundation'
+
+}
