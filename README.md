@@ -7,11 +7,22 @@
 
 OnyxLauncher is an Android launcher for Minecraft: Java Edition, built on top of PojavLauncher and extended with a modern instance manager, modpack browsing, custom profile icons, mobile performance defaults, renderer controls, and mod/resource/shader workflows.
 
-The recommended way to play is through the official Google Play build:
-
-[OnyxLauncher on Google Play](https://play.google.com/store/apps/details?id=com.cannon.onyxlauncher) | [Studio BaseCode](https://basecodestudio.pages.dev)
+<p align="center">
+  <a href="https://play.google.com/store/apps/details?id=com.cannon.onyxlauncher">
+    <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Get it on Google Play" height="60"/>
+  </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://basecodestudio.pages.dev">
+    <img src="https://raw.githubusercontent.com/studio-basecode/OnyxLauncher/main/studio_basecode_logo.png" alt="Studio BaseCode" height="60"/>
+  </a>
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://github.com/studio-basecode/OnyxLauncher/releases/latest">
+    <img src="https://img.shields.io/github/v/release/studio-basecode/OnyxLauncher?style=for-the-badge&logo=github&logoColor=white&label=Download%20APK&color=161b22" alt="Download APK from GitHub Releases" height="40"/>
+  </a>
+</p>
 
 ---
+
 
 ## Project Overview
 
