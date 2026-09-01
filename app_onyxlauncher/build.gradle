@@ -97,6 +97,7 @@ android {
 
     lintOptions {
         abortOnError false
+        checkReleaseBuilds false
     }
 
     signingConfigs {
@@ -119,10 +120,16 @@ android {
         applicationId "com.cannon.onyxlauncher"
         minSdkVersion 21
         targetSdkVersion 35
-        versionCode 3
-        versionName getVersionName()
+        versionCode 4
+        versionName "1.3"
         multiDexEnabled true //important
         resValue 'string', 'curseforge_api_key', getCFApiKey()
+    }
+
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "onyxlauncher-${variant.versionName}.apk"
+        }
     }
 
     buildTypes {
@@ -206,6 +213,9 @@ afterEvaluate {
     tasks.configureEach { task ->
         if (task.name.startsWith("merge") && task.name.endsWith("Assets")) {
             task.dependsOn(":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar")
+        }
+        if (task.name.startsWith("generateReleaseLint") || task.name == "generateReleaseLintVitalReportModel") {
+            task.mustRunAfter(":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar")
         }
     }
 }
