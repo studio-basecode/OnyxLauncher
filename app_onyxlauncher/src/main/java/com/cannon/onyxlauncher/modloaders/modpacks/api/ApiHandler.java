@@ -21,7 +21,6 @@ import java.util.Objects;
 
 @SuppressWarnings("unused")
 public class ApiHandler {
-    private static final int TIME_OUT = 30000;
     public final String baseUrl;
     public final Map<String, String> additionalHeaders;
 
@@ -32,12 +31,8 @@ public class ApiHandler {
 
     public ApiHandler(String url, String apiKey) {
         baseUrl = url;
-        if (apiKey == null || apiKey.trim().isEmpty()) {
-            additionalHeaders = null;
-        } else {
-            additionalHeaders = new ArrayMap<>();
-            additionalHeaders.put("x-api-key", apiKey.trim());
-        }
+        additionalHeaders = new ArrayMap<>();
+        additionalHeaders.put("x-api-key", apiKey);
     }
 
     public <T> T get(String endpoint, Class<T> tClass) {
@@ -66,16 +61,9 @@ public class ApiHandler {
         try {
             HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
             addHeaders(conn, headers);
-            conn.setConnectTimeout(TIME_OUT);
-            conn.setReadTimeout(TIME_OUT);
-            conn.connect();
-            int responseCode = conn.getResponseCode();
-            if (responseCode < 200 || responseCode > 299) {
-                throw new IOException("Server returned HTTP " + responseCode + ": " + conn.getResponseMessage());
-            }
             InputStream inputStream = conn.getInputStream();
             String data = Tools.read(inputStream);
-            Log.d("ApiHandler", "GET " + url + " -> " + data.length() + " bytes");
+            Log.d(ApiHandler.class.toString(), data);
             inputStream.close();
             conn.disconnect();
             return data;
@@ -96,8 +84,6 @@ public class ApiHandler {
             conn.setRequestProperty("Content-Type", "application/json");
             conn.setRequestProperty("Accept", "application/json");
             addHeaders(conn, headers);
-            conn.setConnectTimeout(TIME_OUT);
-            conn.setReadTimeout(TIME_OUT);
             conn.setDoOutput(true);
 
             OutputStream outputStream = conn.getOutputStream();
@@ -118,7 +104,6 @@ public class ApiHandler {
     }
 
     private static void addHeaders(HttpURLConnection connection, Map<String, String> headers) {
-        connection.setRequestProperty("User-Agent", "OnyxLauncher/1.0.0 (Android)");
         if(headers != null) {
             for(String key : headers.keySet())
                 connection.addRequestProperty(key, headers.get(key));

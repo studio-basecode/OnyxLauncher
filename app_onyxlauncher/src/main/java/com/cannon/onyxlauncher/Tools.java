@@ -282,15 +282,6 @@ public final class Tools {
         }
         LauncherPreferences.applyProfileOverrides(minecraftProfile);
         applyRendererCompatibilityPolicy(activity, minecraftProfile, versionId);
-        File gamedir = Tools.getGameDirPath(minecraftProfile);
-        if(MobileProfileOptimizer.apply(activity, minecraftProfile, gamedir)) {
-            LauncherPreferences.applyProfileOverrides(minecraftProfile);
-            try {
-                LauncherProfiles.write();
-            } catch (Exception e) {
-                Log.w("Tools", "Failed to persist mobile profile optimization", e);
-            }
-        }
 
         int freeDeviceMemory = getFreeDeviceMemory(activity);
         int localeString;
@@ -315,7 +306,8 @@ public final class Tools {
                 // to start after the activity is shown again
             }
         }
-        MobileProfileOptimizer.applyGameDirectoryOptimizations(gamedir, minecraftProfile);
+        LauncherProfiles.load();
+        File gamedir = Tools.getGameDirPath(minecraftProfile);
         if(checkRenderDistance(gamedir)) {
             LifecycleAwareAlertDialog.DialogCreator dialogCreator = ((alertDialog, dialogBuilder) ->
                     dialogBuilder.setMessage(activity.getString(R.string.ltw_render_distance_warning_msg))
@@ -338,7 +330,15 @@ public final class Tools {
 
 
         // Pre-process specific files
+        if ("vulkan_zink".equals(LOCAL_RENDERER)) {
+            restoreGLESDisabledModsIfZink(gamedir);
+        } else {
+            sanitizeIncompatibleGLESMods(gamedir);
+        }
         disableSplash(gamedir);
+        applyLithiumCompatPatch(gamedir);
+        applySodiumCompatPatch(gamedir);
+        applyModMixinCompatPatches(gamedir);
         String[] launchArgs = getMinecraftClientArgs(minecraftAccount, versionInfo, gamedir);
 
         // Select the appropriate openGL version
@@ -351,7 +351,20 @@ public final class Tools {
 
         List<String> javaArgList = new ArrayList<>();
 
-        getCacioJavaArgs(javaArgList, runtime.javaVersion == 8);
+        // Add universal SpongePowered Mixin LVT compatibility flags for Android JDK 21
+        javaArgList.add("-Dmixin.env.disableLVTCheck=true");
+        javaArgList.add("-Dmixin.checks.lvt=false");
+        javaArgList.add("-Dmixin.config.enchdesc.mixins.json.disabled=true");
+
+        if (runtime.javaVersion <= 17) {
+            getCacioJavaArgs(javaArgList, runtime.javaVersion == 8);
+        } else {
+            javaArgList.add("-Djava.awt.headless=true");
+            javaArgList.add("--add-opens=java.base/java.util=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.lang=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.io=ALL-UNNAMED");
+        }
 
         if (versionInfo.logging != null) {
             String configFile = Tools.DIR_DATA + "/security/" + versionInfo.logging.client.file.id.replace("client", "log4j-rce-patch");
@@ -612,6 +625,389 @@ public final class Tools {
         } catch (IOException e) {
             Log.e(APP_NAME, "Failed to apply Minecraft 26.1.2 compatibility patch", e);
         }
+    }
+
+    private static void applyLithiumCompatPatch(File gamedir) {
+        if (gamedir == null) return;
+        File[] targetFiles = new File[] {
+            new File(gamedir, "config/lithium.properties"),
+            new File(gamedir, "config/yosbr/config/lithium.properties")
+        };
+        for (File lithiumProperties : targetFiles) {
+            try {
+                File parentDir = lithiumProperties.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs();
+                }
+                java.util.Properties props = new java.util.Properties();
+                if (lithiumProperties.exists()) {
+                    try (FileInputStream fis = new FileInputStream(lithiumProperties)) {
+                        props.load(fis);
+                    }
+                }
+                boolean updated = false;
+                String[] disableRules = new String[] {
+                    "mixin.entity",
+                    "mixin.block",
+                    "mixin.ai",
+                    "mixin.world"
+                };
+                for (String rule : disableRules) {
+                    if (!"false".equals(props.getProperty(rule))) {
+                        props.setProperty(rule, "false");
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    try (FileOutputStream fos = new FileOutputStream(lithiumProperties)) {
+                        props.store(fos, "OnyxLauncher automatic compatibility fix for Lithium mixin crash on Fabric");
+                    }
+                    Log.i(APP_NAME, "Applied automatic Lithium compatibility fix to: " + lithiumProperties.getAbsolutePath());
+                }
+            } catch (Throwable t) {
+                Log.w(APP_NAME, "Failed to apply Lithium compatibility patch to " + lithiumProperties, t);
+            }
+        }
+    }
+
+    private static void sanitizeIncompatibleGLESMods(File gamedir) {
+        if (gamedir == null) return;
+        File modsDir = new File(gamedir, "mods");
+        if (!modsDir.exists() || !modsDir.isDirectory()) return;
+
+        // Sodium and Iris chunk shaders rely on desktop OpenGL 4.5 integer vertex attributes (uvec2 a_Position)
+        // which GL4ES / mobile GLES cannot render (causing all world blocks and terrain to be invisible).
+        // On GL4ES, automatically disable Sodium and Iris addon jars so vanilla Indigo rendering works with full textures.
+        String[] incompatiblePatterns = new String[] {
+            "sodium-fabric",
+            "sodium-extra",
+            "sodiumextras",
+            "sodiumleafculling",
+            "sodiumoptionsapi",
+            "sodium-shadowy-path-blocks",
+            "reeses-sodium-options",
+            "iris-fabric"
+        };
+        File[] files = modsDir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            String name = f.getName().toLowerCase(Locale.ROOT);
+            if (!name.endsWith(".jar")) continue;
+            for (String pat : incompatiblePatterns) {
+                if (name.contains(pat)) {
+                    File disabledTarget = new File(modsDir, f.getName() + ".disabled_gl4es");
+                    if (f.renameTo(disabledTarget)) {
+                        Log.i(APP_NAME, "Auto-disabled incompatible desktop Sodium/Iris mod for GL4ES: " + f.getName());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void restoreGLESDisabledModsIfZink(File gamedir) {
+        if (gamedir == null) return;
+        File modsDir = new File(gamedir, "mods");
+        if (!modsDir.exists() || !modsDir.isDirectory()) return;
+        File[] files = modsDir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.getName().endsWith(".disabled_gl4es")) {
+                String originalName = f.getName().substring(0, f.getName().length() - ".disabled_gl4es".length());
+                File restored = new File(modsDir, originalName);
+                if (f.renameTo(restored)) {
+                    Log.i(APP_NAME, "Restored Sodium/Iris mod for Zink: " + restored.getName());
+                }
+            }
+        }
+    }
+
+    private static void applySodiumCompatPatch(File gamedir) {
+        if (gamedir == null) return;
+        File[] targetFiles = new File[] {
+            new File(gamedir, "config/sodium-options.json"),
+            new File(gamedir, "config/yosbr/config/sodium-options.json")
+        };
+        for (File sodiumOptions : targetFiles) {
+            try {
+                File parentDir = sodiumOptions.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs();
+                }
+                String content = "";
+                if (sodiumOptions.exists()) {
+                    content = Tools.read(sodiumOptions.getAbsolutePath());
+                }
+                if (content.isEmpty() || !content.contains("use_advanced_staging_buffers")) {
+                    content = "{\n" +
+                            "  \"quality\": {\n" +
+                            "    \"weather_quality\": \"FAST\",\n" +
+                            "    \"leaves_quality\": \"FANCY\",\n" +
+                            "    \"enable_vignette\": true\n" +
+                            "  },\n" +
+                            "  \"advanced\": {\n" +
+                            "    \"enable_memory_tracing\": false,\n" +
+                            "    \"use_advanced_staging_buffers\": false,\n" +
+                            "    \"cpu_render_ahead_limit\": 3\n" +
+                            "  },\n" +
+                            "  \"performance\": {\n" +
+                            "    \"chunk_builder_threads\": 2,\n" +
+                            "    \"always_defer_chunk_updates_v2\": false,\n" +
+                            "    \"animate_only_visible_textures\": true,\n" +
+                            "    \"use_entity_culling\": true,\n" +
+                            "    \"use_fog_occlusion\": false,\n" +
+                            "    \"use_block_face_culling\": false,\n" +
+                            "    \"use_no_error_g_l_context\": false,\n" +
+                            "    \"leaf_culling_quality\": \"SOLID\"\n" +
+                            "  },\n" +
+                            "  \"notifications\": {\n" +
+                            "    \"has_cleared_donation_button\": false,\n" +
+                            "    \"has_seen_donation_prompt\": false\n" +
+                            "  },\n" +
+                            "  \"debug\": {\n" +
+                            "    \"terrain_sorting_enabled\": false\n" +
+                            "  }\n" +
+                            "}";
+                    Tools.write(sodiumOptions.getAbsolutePath(), content);
+                    Log.i(APP_NAME, "Created default Sodium config for GL4ES compatibility: " + sodiumOptions.getAbsolutePath());
+                } else {
+                    boolean modified = false;
+                    if (content.contains("\"use_advanced_staging_buffers\": true")) {
+                        content = content.replace("\"use_advanced_staging_buffers\": true", "\"use_advanced_staging_buffers\": false");
+                        modified = true;
+                    }
+                    if (content.contains("\"always_defer_chunk_updates_v2\": true")) {
+                        content = content.replace("\"always_defer_chunk_updates_v2\": true", "\"always_defer_chunk_updates_v2\": false");
+                        modified = true;
+                    }
+                    if (content.contains("\"use_block_face_culling\": true")) {
+                        content = content.replace("\"use_block_face_culling\": true", "\"use_block_face_culling\": false");
+                        modified = true;
+                    }
+                    if (content.contains("\"terrain_sorting_enabled\": true")) {
+                        content = content.replace("\"terrain_sorting_enabled\": true", "\"terrain_sorting_enabled\": false");
+                        modified = true;
+                    }
+                    if (modified) {
+                        Tools.write(sodiumOptions.getAbsolutePath(), content);
+                        Log.i(APP_NAME, "Updated Sodium config for GL4ES compatibility: " + sodiumOptions.getAbsolutePath());
+                    }
+                }
+            } catch (Throwable t) {
+                Log.w(APP_NAME, "Failed to apply Sodium compatibility patch to " + sodiumOptions, t);
+            }
+        }
+
+        File[] mixinPropertyFiles = new File[] {
+            new File(gamedir, "config/sodium-mixins.properties"),
+            new File(gamedir, "config/yosbr/config/sodium-mixins.properties")
+        };
+        for (File mixinProps : mixinPropertyFiles) {
+            try {
+                File parentDir = mixinProps.getParentFile();
+                if (parentDir != null && !parentDir.exists()) {
+                    parentDir.mkdirs();
+                }
+                java.util.Properties props = new java.util.Properties();
+                if (mixinProps.exists()) {
+                    try (FileInputStream fis = new FileInputStream(mixinProps)) {
+                        props.load(fis);
+                    }
+                }
+                boolean updated = false;
+                String[] disableRules = new String[] {
+                    "mixin.features.render.immediate.matrix_stack",
+                    "mixin.features.render.immediate.buffer_builder",
+                    "mixin.features.render.compositing",
+                    "mixin.workarounds.context_creation"
+                };
+                for (String rule : disableRules) {
+                    if (!"false".equals(props.getProperty(rule))) {
+                        props.setProperty(rule, "false");
+                        updated = true;
+                    }
+                }
+                if (updated) {
+                    try (FileOutputStream fos = new FileOutputStream(mixinProps)) {
+                        props.store(fos, "OnyxLauncher automatic compatibility fix for Sodium terrain rendering on GL4ES");
+                    }
+                    Log.i(APP_NAME, "Applied automatic Sodium mixin compatibility fix to: " + mixinProps.getAbsolutePath());
+                }
+            } catch (Throwable t) {
+                Log.w(APP_NAME, "Failed to apply Sodium mixin compatibility patch to " + mixinProps, t);
+            }
+        }
+    }
+
+    private static class MixinPatchRule {
+        final String[] jarKeywords;
+        final String[] classKeywords;
+        final String[] jsonMixinKeywords;
+
+        MixinPatchRule(String[] jarKeywords, String[] classKeywords, String[] jsonMixinKeywords) {
+            this.jarKeywords = jarKeywords;
+            this.classKeywords = classKeywords;
+            this.jsonMixinKeywords = jsonMixinKeywords;
+        }
+    }
+
+    private static final MixinPatchRule[] MOD_MIXIN_PATCH_RULES = new MixinPatchRule[] {
+        // enchdesc: MixinItemEnchants LVT crash on Android ARM64
+        new MixinPatchRule(
+            new String[]{"enchdesc", "enchantmentdescriptions"},
+            new String[]{"MixinItemEnchants"},
+            new String[]{"MixinItemEnchants"}
+        ),
+        // owo: Copenhagen (malding inject) LVT crash on Android ARM64
+        new MixinPatchRule(
+            new String[]{"owo"},
+            new String[]{"Copenhagen"},
+            new String[]{"Copenhagen"}
+        ),
+        // sodium: LevelRendererMixin MixinExtras @Local sugar crash on Android ARM64
+        new MixinPatchRule(
+            new String[]{"sodium"},
+            new String[]{"LevelRendererMixin"},
+            new String[]{"LevelRendererMixin"}
+        )
+    };
+
+    /**
+     * Automatically fixes mods that have broken LVT (Local Variable Table) @Inject mixins
+     * causing InjectionError / MixinTransformerError on mobile Android ARM64 JVMs.
+     * Strips both the problematic .class file and its entry from *.mixins.json inside the mod JAR.
+     */
+    private static void applyModMixinCompatPatches(File gamedir) {
+        if (gamedir == null) return;
+
+        List<File> modsDirs = new ArrayList<>();
+        File primaryMods = new File(gamedir, "mods");
+        if (primaryMods.exists() && primaryMods.isDirectory()) modsDirs.add(primaryMods);
+        File rootMods = new File(Tools.DIR_GAME_HOME, "mods");
+        if (rootMods.exists() && rootMods.isDirectory() && !rootMods.equals(primaryMods)) modsDirs.add(rootMods);
+
+        for (File modsDir : modsDirs) {
+            File[] jarFiles = modsDir.listFiles((dir, name) -> name.endsWith(".jar"));
+            if (jarFiles == null) continue;
+
+            for (File modJar : jarFiles) {
+                String jarNameLower = modJar.getName().toLowerCase();
+                for (MixinPatchRule rule : MOD_MIXIN_PATCH_RULES) {
+                    boolean matches = false;
+                    for (String kw : rule.jarKeywords) {
+                        if (jarNameLower.contains(kw.toLowerCase())) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                    if (!matches) continue;
+
+                    File markerFile = new File(modJar.getAbsolutePath() + ".onyx_mixin_patched_" + rule.jarKeywords[0]);
+                    if (markerFile.exists() && markerFile.lastModified() >= modJar.lastModified()) {
+                        continue;
+                    }
+
+                    Log.i(APP_NAME, "Applying compatibility mixin patch to: " + modJar.getName());
+
+                    java.util.Set<String> classesToRemove = new java.util.HashSet<>();
+                    java.util.Map<String, byte[]> patchedJsonEntries = new java.util.HashMap<>();
+
+                    try (ZipInputStream scan = new ZipInputStream(new BufferedInputStream(new FileInputStream(modJar)))) {
+                        ZipEntry entry;
+                        while ((entry = scan.getNextEntry()) != null) {
+                            String entryName = entry.getName();
+                            for (String ck : rule.classKeywords) {
+                                if (entryName.endsWith("/" + ck + ".class") || entryName.equals(ck + ".class")) {
+                                    classesToRemove.add(entryName);
+                                    Log.i(APP_NAME, "Found mixin class to remove: " + entryName);
+                                }
+                            }
+                            if (entryName.endsWith(".mixins.json") || entryName.equals("mixins.json")) {
+                                byte[] jsonBytes = IOUtils.toByteArray(scan);
+                                String jsonContent = new String(jsonBytes, StandardCharsets.UTF_8);
+                                boolean needsPatch = false;
+                                for (String jk : rule.jsonMixinKeywords) {
+                                    if (jsonContent.contains(jk)) {
+                                        jsonContent = removeMixinEntryFromJson(jsonContent, jk);
+                                        needsPatch = true;
+                                    }
+                                }
+                                if (needsPatch) {
+                                    patchedJsonEntries.put(entryName, jsonContent.getBytes(StandardCharsets.UTF_8));
+                                    Log.i(APP_NAME, "Patched mixin config: " + entryName);
+                                }
+                            }
+                            scan.closeEntry();
+                        }
+                    } catch (IOException e) {
+                        Log.e(APP_NAME, "Failed to scan mod jar: " + modJar.getName(), e);
+                        continue;
+                    }
+
+                    if (classesToRemove.isEmpty() && patchedJsonEntries.isEmpty()) {
+                        try { markerFile.createNewFile(); } catch (IOException ignored) {}
+                        continue;
+                    }
+
+                    File patchedJar = new File(modJar.getAbsolutePath() + ".onyxpatch");
+                    try (
+                        ZipInputStream input = new ZipInputStream(new BufferedInputStream(new FileInputStream(modJar)));
+                        ZipOutputStream output = new ZipOutputStream(new FileOutputStream(patchedJar))
+                    ) {
+                        ZipEntry entry;
+                        while ((entry = input.getNextEntry()) != null) {
+                            String entryName = entry.getName();
+                            if (classesToRemove.contains(entryName)) {
+                                input.closeEntry();
+                                continue;
+                            }
+                            ZipEntry outEntry = new ZipEntry(entryName);
+                            if (entry.getTime() >= 0) outEntry.setTime(entry.getTime());
+                            output.putNextEntry(outEntry);
+
+                            if (patchedJsonEntries.containsKey(entryName)) {
+                                output.write(patchedJsonEntries.get(entryName));
+                            } else {
+                                IOUtils.copy(input, output);
+                            }
+                            output.closeEntry();
+                            input.closeEntry();
+                        }
+                    } catch (IOException e) {
+                        Log.e(APP_NAME, "Failed to write patched mod jar: " + modJar.getName(), e);
+                        if (patchedJar.exists()) patchedJar.delete();
+                        continue;
+                    }
+
+                    if (modJar.delete() && patchedJar.renameTo(modJar)) {
+                        try { markerFile.createNewFile(); } catch (IOException ignored) {}
+                        Log.i(APP_NAME, "Successfully patched mod JAR: " + modJar.getName());
+                    } else {
+                        Log.e(APP_NAME, "Failed to overwrite original mod JAR: " + modJar.getName());
+                        if (patchedJar.exists()) patchedJar.delete();
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Removes a mixin class name entry from a SpongePowered Mixin JSON config string.
+     * Handles removal from both "mixins" and "client"/"server" arrays.
+     * Uses simple string manipulation to avoid needing a full JSON parser.
+     */
+    private static String removeMixinEntryFromJson(String json, String mixinSimpleName) {
+        String result = json;
+        // Try removing with trailing comma:    "patch.MixinItemEnchants",
+        result = result.replaceAll("\"[^\"]*" + java.util.regex.Pattern.quote(mixinSimpleName) + "[^\"]*\"\\s*,\\s*", "");
+        // Try removing with leading comma:    , "patch.MixinItemEnchants"
+        result = result.replaceAll(",\\s*\"[^\"]*" + java.util.regex.Pattern.quote(mixinSimpleName) + "[^\"]*\"", "");
+        // Try removing standalone (only entry):    "patch.MixinItemEnchants"
+        result = result.replaceAll("\"[^\"]*" + java.util.regex.Pattern.quote(mixinSimpleName) + "[^\"]*\"", "");
+        // Clean up any empty arrays that might result: [ ] -> []
+        result = result.replaceAll("\\[\\s*\\]", "[]");
+        Log.i(APP_NAME, "Patched mixin JSON: removed " + mixinSimpleName);
+        return result;
     }
 
     private static void patchMinecraft26ClientJar(String versionId) throws IOException {
@@ -1625,64 +2021,22 @@ public final class Tools {
 
     public static void applyRendererCompatibilityPolicy(Context context, MinecraftProfile minecraftProfile, String versionId) {
         File gamedir = Tools.getGameDirPath(minecraftProfile);
-        boolean sodiumOrIrisInstalled = hasSodium(gamedir);
         GLInfoUtils.GLInfo glInfo = GLInfoUtils.getGlInfo();
 
-        if (MobileProfileOptimizer.isExtremePack(gamedir)) {
-            String renderer = LOCAL_RENDERER != null ? LOCAL_RENDERER : LauncherPreferences.PREF_RENDERER;
-            String profileRenderer = minecraftProfile != null ? minecraftProfile.pojavRendererName : null;
-            if (!"opengles2".equals(renderer) || !"opengles2".equals(profileRenderer)) {
-                setRendererForCurrentProfile(context, minecraftProfile, versionId, "opengles2",
-                        "Using Holy GL4ES for extreme modpack to avoid Zink GL memory pressure");
-            }
+        if (android.os.Build.VERSION.SDK_INT >= 35 || (glInfo.renderer != null && (glInfo.renderer.contains("Adreno (TM) 750") || glInfo.renderer.contains("SM-S928") || glInfo.renderer.contains("Snapdragon 8 Gen 3")))) {
+            // Android 15/16 (API 35+) and Adreno 750 require opengles3 (GL4ES) with our Sodium compatibility patch
+            setRendererForCurrentProfile(context, minecraftProfile, versionId, "opengles3",
+                    "Auto-enforcing opengles3 with Sodium compatibility patch for stability");
             return;
         }
 
-        if (glInfo.renderer != null && (glInfo.renderer.contains("Adreno (TM) 750") || glInfo.renderer.contains("SM-S928") || glInfo.renderer.contains("Snapdragon 8 Gen 3"))) {
-            // Adreno 750 is stable for the modern shader stack only when Zink uses the bundled
-            // Turnip Vulkan driver. Avoid pinning Iris/Sodium profiles back to GL4ES.
-            if (sodiumOrIrisInstalled || requiresZinkForReliableRendering(versionId)) {
-                if (isOpenGlesRenderer(LOCAL_RENDERER) && checkRendererCompatible(context, "vulkan_zink")) {
-                    setRendererForCurrentProfile(context, minecraftProfile, versionId, "vulkan_zink",
-                            "Enabled Zink with Turnip for Snapdragon 8 Gen 3 (Adreno 750) shader stability");
-                }
-                return;
-            }
-        }
-
-        if (minecraftProfile != null && minecraftProfile.pojavRendererName != null) {
-            String profileRenderer = minecraftProfile.pojavRendererName;
-            if ("vulkan_zink".equals(profileRenderer)) {
-                if (glInfo.renderer != null && glInfo.renderer.contains("Adreno (TM) 6")) {
-                    setRendererForCurrentProfile(context, minecraftProfile, versionId, "opengles3",
-                            "Forcing opengles3 — Zink crashes on Adreno 6xx");
-                    return;
-                }
-            }
+        if (minecraftProfile != null && isValidString(minecraftProfile.pojavRendererName)) {
+            LOCAL_RENDERER = minecraftProfile.pojavRendererName;
+            return;
         }
 
         String renderer = LOCAL_RENDERER != null ? LOCAL_RENDERER : LauncherPreferences.PREF_RENDERER;
-        boolean isAdreno = glInfo.isAdreno();
-        if (!isAdreno) {
-            if ("vulkan_zink".equals(renderer)) {
-                setRendererForCurrentProfile(context, minecraftProfile, versionId, "opengles2",
-                        "Disabled Zink on non-Adreno GPU");
-            }
-            return;
-        }
-
-        if (glInfo.renderer != null && glInfo.renderer.contains("Adreno (TM) 6")) {
-            Log.i(APP_NAME, "Adreno 6xx detected, keeping default GLES renderer to avoid Zink crash");
-            return;
-        }
-
-        if (sodiumOrIrisInstalled || requiresZinkForReliableRendering(versionId)) {
-            if (!isOpenGlesRenderer(renderer)) return;
-            if (checkRendererCompatible(context, "vulkan_zink")) {
-                setRendererForCurrentProfile(context, minecraftProfile, versionId, "vulkan_zink",
-                        "Enabled Zink for newer Minecraft or Sodium on Adreno");
-            }
-        }
+        LOCAL_RENDERER = renderer;
     }
 
 

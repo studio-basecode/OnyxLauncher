@@ -15,7 +15,7 @@ import org.apache.commons.io.*;
 @SuppressWarnings("IOStreamConstructor")
 public class DownloadUtils {
     public static final String USER_AGENT = Tools.APP_NAME;
-    private static final int TIME_OUT = 60000;
+    private static final int TIME_OUT = 10000;
 
     public static void download(String url, OutputStream os) throws IOException {
         download(new URL(url), os);
@@ -69,17 +69,10 @@ public class DownloadUtils {
         FileUtils.ensureParentDirectory(outputFile);
 
         HttpURLConnection conn = (HttpURLConnection) new URL(urlInput).openConnection();
-        conn.setRequestProperty("User-Agent", USER_AGENT);
         conn.setConnectTimeout(TIME_OUT);
         conn.setReadTimeout(TIME_OUT);
-        try {
-            conn.connect();
-            int responseCode = conn.getResponseCode();
-            if (responseCode < 200 || responseCode > 299) {
-                throw new IOException("Server returned HTTP " + responseCode + ": " + conn.getResponseMessage());
-            }
-            try (InputStream readStr = new BufferedInputStream(conn.getInputStream(), 131072);
-                 OutputStream fos = new BufferedOutputStream(new FileOutputStream(outputFile), 131072)) {
+        InputStream readStr = conn.getInputStream();
+        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
             int current;
             int overall = 0;
             int length = conn.getContentLength();
@@ -91,11 +84,9 @@ public class DownloadUtils {
                 fos.write(buffer, 0, current);
                 monitor.updateProgress(overall, length);
             }
-            }
+            conn.disconnect();
         } catch (IOException e) {
             throw new IOException("Unable to download from " + urlInput, e);
-        } finally {
-            conn.disconnect();
         }
     }
 
@@ -201,3 +192,4 @@ public class DownloadUtils {
         }
     }
 }
+

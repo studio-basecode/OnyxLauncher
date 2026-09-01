@@ -8,7 +8,6 @@ import com.cannon.onyxlauncher.utils.DownloadUtils;
 import java.io.File;
 import java.io.IOException;
 import java.io.InterruptedIOException;
-import java.util.Locale;
 import java.util.concurrent.Callable;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -17,10 +16,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ModDownloader {
-    private static final int DEFAULT_PARALLEL_DOWNLOADS = 8;
-    private static final int MAX_PARALLEL_DOWNLOADS = 12;
     private static final ThreadLocal<byte[]> sThreadLocalBuffer = new ThreadLocal<>();
-    private final ThreadPoolExecutor mDownloadPool;
+    private final ThreadPoolExecutor mDownloadPool = new ThreadPoolExecutor(4,4,100, TimeUnit.MILLISECONDS,
+            new LinkedBlockingQueue<>());
     private final AtomicBoolean mTerminator = new AtomicBoolean(false);
     private final AtomicLong mDownloadSize = new AtomicLong(0);
     private final Object mExceptionSyncPoint = new Object();
@@ -34,13 +32,6 @@ public class ModDownloader {
     }
 
     public ModDownloader(File destinationDirectory, boolean useFileCount) {
-        this(destinationDirectory, useFileCount, DEFAULT_PARALLEL_DOWNLOADS);
-    }
-
-    public ModDownloader(File destinationDirectory, boolean useFileCount, int parallelDownloads) {
-        int workerCount = Math.max(1, Math.min(MAX_PARALLEL_DOWNLOADS, parallelDownloads));
-        this.mDownloadPool = new ThreadPoolExecutor(workerCount, workerCount, 100, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>());
         this.mDownloadPool.setRejectedExecutionHandler(new ThreadPoolExecutor.DiscardPolicy());
         this.mDestinationDirectory = destinationDirectory;
         this.mUseFileCount = useFileCount;
@@ -49,13 +40,7 @@ public class ModDownloader {
     public void submitDownload(int fileSize, String relativePath, @Nullable String downloadHash, String... url) {
         if(mUseFileCount) mTotalSize += 1;
         else mTotalSize += fileSize;
-        mDownloadPool.execute(() -> {
-            try {
-                new DownloadTask(url, safeDestinationFile(relativePath), downloadHash).run();
-            } catch (IOException e) {
-                downloadFailed(e);
-            }
-        });
+        mDownloadPool.execute(new DownloadTask(url, new File(mDestinationDirectory, relativePath), downloadHash));
     }
 
     public void submitDownload(FileInfoProvider infoProvider) {
@@ -85,7 +70,7 @@ public class ModDownloader {
     private static byte[] getThreadLocalBuffer() {
         byte[] buffer = sThreadLocalBuffer.get();
         if(buffer != null) return buffer;
-        buffer = new byte[131072];
+        buffer = new byte[8192];
         sThreadLocalBuffer.set(buffer);
         return buffer;
     }
@@ -110,12 +95,8 @@ public class ModDownloader {
             try {
                 FileInfo fileInfo = mFileInfoProvider.getFileInfo();
                 if(fileInfo == null) return;
-                String normalizedUrl = ModpackUrlUtils.normalizeUrl(fileInfo.url);
-                if(!ModpackUrlUtils.isHttpUrl(normalizedUrl)) {
-                    throw new IOException("Invalid download URL: " + fileInfo.url);
-                }
                 new DownloadTask(new String[]{fileInfo.url},
-                        safeDestinationFile(fileInfo.relativePath), fileInfo.sha1).run();
+                        new File(mDestinationDirectory, fileInfo.relativePath), fileInfo.sha1).run();
             }catch (IOException e) {
                 downloadFailed(e);
             }
@@ -137,28 +118,20 @@ public class ModDownloader {
 
         @Override
         public void run() {
-            IOException lastException = null;
             for(String sourceUrl : mDownloadUrls) {
-                String normalizedUrl = ModpackUrlUtils.normalizeUrl(sourceUrl);
-                if(!ModpackUrlUtils.isHttpUrl(normalizedUrl)) {
-                    lastException = new IOException("Invalid download URL: " + sourceUrl);
-                    continue;
-                }
                 try {
                     DownloadUtils.ensureSha1(mDestination, mSha1, (Callable<Void>) () -> {
-                        IOException exception = tryDownload(normalizedUrl);
+                        IOException exception = tryDownload(sourceUrl);
                         if(exception != null) {
                             throw exception;
                         }
                         return null;
                     });
-                    return;
 
                 }catch (IOException e) {
-                    lastException = e;
+                    downloadFailed(e);
                 }
             }
-            if(lastException != null) downloadFailed(lastException);
         }
 
         private IOException tryDownload(String sourceUrl) throws InterruptedException {
@@ -204,19 +177,5 @@ public class ModDownloader {
 
     public interface FileInfoProvider {
         FileInfo getFileInfo() throws IOException;
-    }
-
-    private File safeDestinationFile(String relativePath) throws IOException {
-        if(relativePath == null || relativePath.trim().isEmpty()) {
-            throw new IOException("Missing destination path for downloaded file");
-        }
-        String normalizedPath = relativePath.replace('\\', '/');
-        while(normalizedPath.startsWith("./")) normalizedPath = normalizedPath.substring(2);
-        while(normalizedPath.startsWith("/")) normalizedPath = normalizedPath.substring(1);
-        if(normalizedPath.contains("../") || normalizedPath.equals("..") ||
-                normalizedPath.toLowerCase(Locale.ROOT).matches("^[a-z]:/.*")) {
-            throw new IOException("Unsafe destination path in modpack: " + relativePath);
-        }
-        return new File(mDestinationDirectory, normalizedPath);
     }
 }

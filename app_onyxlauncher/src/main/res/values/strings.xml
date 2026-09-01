@@ -336,7 +336,6 @@
     <string name="modpack_install_notification_title">Onyx Modpack Installer</string>
     <string name="modpack_install_notification_success">Click here to finish modpack installation</string>
     <string name="modpack_install_notification_data_not_available">Failed to download mod loader information</string>
-    <string name="modpack_background_already_running">A modpack download is already running</string>
     <string name="modpack_install_modloader_download_failed">Failed to download the mod loader files</string>
     <string name="modpack_install_download_failed">Failed to download modpack files</string>
     <string name="modpack_install_button">Create modpack profile</string>
@@ -444,9 +443,6 @@
     <string name="button_create_instance">Create Instance</string>
     <string name="browse_and_download_modpacks">Browse and download modpacks</string>
     <string name="search_modpack_placeholder">Search modpack...</string>
-    <string name="source_local_packs">My packs</string>
-    <string name="button_choose_local_modpack">Choose modpack file</string>
-    <string name="status_preparing_local_modpack">Preparing local modpack...</string>
     <string name="search_technic_hint">Enter the exact Technic pack ID and confirm</string>
     <string name="search_no_results">No search results found</string>
     <string name="failed_to_load_modpack_details">Failed to load modpack details.</string>
@@ -543,16 +539,6 @@
     <string name="search_language_placeholder">Search language…</string>
     <string name="settings_title">Settings</string>
     <string name="ram_allocation_label">RAM Allocation: %d MB</string>
-    <string name="play_stats_title">Play statistics</string>
-    <string name="play_stats_total">Total played</string>
-    <string name="play_stats_week">This week</string>
-    <string name="play_stats_longest">Longest session</string>
-    <string name="play_stats_last_session">Last session</string>
-    <string name="play_stats_sessions">Sessions</string>
-    <string name="play_stats_average">Average session</string>
-    <string name="play_stats_last_played">Last played</string>
-    <string name="play_stats_interrupted">Recovered crashes</string>
-    <string name="play_stats_never">Never</string>
     <string name="toast_downloading_java_for_installer">Downloading Java %s for the installer…</string>
     <string name="required_dependency">Required dependency</string>
     <string name="content_desc_settings">Settings</string>
@@ -564,9 +550,6 @@
     <string name="tab_resources_shaders">Resources/Shaders</string>
     <string name="tab_installed">Installed</string>
     <string name="tab_not_installed">Not Installed</string>
-    <string name="source_curseforge">CurseForge</string>
-    <string name="source_modrinth">Modrinth</string>
-    <string name="source_unknown">Unknown</string>
     <string name="tab_resources">Resources</string>
     <string name="tab_shaders">Shaders</string>
     <string name="detail_version_id">Version ID</string>
@@ -639,12 +622,4 @@
     <string name="no_loader_for_version_err">No loader for this version</string>
     <string name="status_starting_download">Starting download…</string>
     <string name="status_launching_forge_gui_installer">Launching graphical Forge installer…</string>
-    <string name="button_save">Save</string>
-    <string name="instance_customize_title">Customize installation</string>
-    <string name="instance_name_label">Name</string>
-    <string name="instance_icon_builtin">Built-in icons</string>
-    <string name="instance_icon_custom_photo">Custom photo</string>
-    <string name="instance_icon_saved">Installation updated</string>
-    <string name="instance_icon_load_failed">Could not load image</string>
-    <string name="instance_icon_save_failed">Could not save icon: %s</string>
 </resources>

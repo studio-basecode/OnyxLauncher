@@ -17,13 +17,11 @@ public class NotificationUtils {
     public static final int NOTIFICATION_ID_DOWNLOAD_LISTENER = 3;
     public static final int NOTIFICATION_ID_SHOW_ERROR = 4;
     public static final int NOTIFICATION_ID_GAME_START = 5;
-    public static final int NOTIFICATION_ID_BACKGROUND_DOWNLOAD = 6;
     public static final int PENDINGINTENT_CODE_KILL_PROGRESS_SERVICE = 1;
     public static final int PENDINGINTENT_CODE_KILL_GAME_SERVICE = 2;
     public static final int PENDINGINTENT_CODE_DOWNLOAD_SERVICE = 3;
     public static final int PENDINGINTENT_CODE_SHOW_ERROR = 4;
     public static final int PENDINGINTENT_CODE_GAME_START = 5;
-    public static final int PENDINGINTENT_CODE_BACKGROUND_DOWNLOAD = 6;
 
     public static void sendBasicNotification(Context context, int contentTitle, int contentText, Intent actionIntent,
                                              int pendingIntentCode, int notificationId) {

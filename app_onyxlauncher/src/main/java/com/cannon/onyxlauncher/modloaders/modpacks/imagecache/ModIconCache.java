@@ -4,7 +4,6 @@ import android.util.Base64;
 import android.util.Log;
 
 import com.cannon.onyxlauncher.Tools;
-import com.cannon.onyxlauncher.modloaders.modpacks.api.ModpackUrlUtils;
 
 import org.apache.commons.io.IOUtils;
 
@@ -89,8 +88,7 @@ public class ModIconCache {
      */
 
     public static void ensureIconCached(com.cannon.onyxlauncher.modloaders.modpacks.models.ModItem item) {
-        String imageUrl = ModpackUrlUtils.normalizeUrl(item.imageUrl);
-        if (!ModpackUrlUtils.isHttpUrl(imageUrl)) return;
+        if (item.imageUrl == null || item.imageUrl.isEmpty()) return;
         File cacheDir = getImageCachePath();
         if (!cacheDir.exists() && !cacheDir.mkdirs()) return;
         File imagePath = new File(cacheDir, item.getIconCacheTag() + ".ca");
@@ -98,7 +96,7 @@ public class ModIconCache {
 
         // Download it!
         try {
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(imageUrl).openConnection();
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) new java.net.URL(item.imageUrl).openConnection();
             conn.setConnectTimeout(5000);
             conn.setReadTimeout(5000);
             conn.setRequestProperty("User-Agent", "OnyxLauncher/1.0.0 (Android)");
@@ -113,7 +111,7 @@ public class ModIconCache {
             conn.disconnect();
             Log.i("IconCache", "Successfully downloaded icon for " + item.id + " to " + imagePath.getAbsolutePath());
         } catch (Exception e) {
-            Log.e("IconCache", "Failed to pre-download icon: " + imageUrl, e);
+            Log.e("IconCache", "Failed to pre-download icon: " + item.imageUrl, e);
         }
     }
 

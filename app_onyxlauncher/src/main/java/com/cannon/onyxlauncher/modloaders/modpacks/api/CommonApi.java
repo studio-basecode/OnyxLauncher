@@ -33,8 +33,8 @@ public class CommonApi implements ModpackApi {
         mCurseforgeApi = new CurseforgeApi(curseforgeApiKey);
         mModrinthApi = new ModrinthApi();
         mTechnicApi = new TechnicApi();
-        mATLauncherApi = new ATLauncherApi(curseforgeApiKey);
-        mFtbLegacyApi = new FtbLegacyApi(curseforgeApiKey);
+        mATLauncherApi = new ATLauncherApi();
+        mFtbLegacyApi = new FtbLegacyApi();
         mModpackApis = new ModpackApi[]{mModrinthApi, mCurseforgeApi, mTechnicApi, mATLauncherApi, mFtbLegacyApi};
     }
 

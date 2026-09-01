@@ -169,9 +169,11 @@ public class LauncherPreferences {
         if (is32BitsDevice()) return 696;
 
         if (deviceRam < 3064) return 936;
-        if (deviceRam < 4096) return 1144;
-        if (deviceRam < 6144) return 1536;
-        return 2048; //Default RAM allocation for 64 bits
+        if (deviceRam < 4096) return 1536;
+        if (deviceRam < 6144) return 2560;
+        if (deviceRam < 8192) return 3584;
+        if (deviceRam < 12288) return 4096;
+        return 6144; // Default RAM allocation for high-end 64 bits devices (12GB+ RAM)
     }
 
     /// Find a correct resolution for the device

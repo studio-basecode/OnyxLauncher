@@ -103,6 +103,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     private QuickSettingSideDialog mQuickSettingSideDialog;
 
     // --- Playtime tracking ---
+    private static final String PREFS_ONYX_DATA = "OnyxData";
     private static final long PLAYTIME_TICK_MS = 10_000L;
     private long mSessionStartTimeMs = 0;
     private Handler mPlaytimeHandler;
@@ -365,9 +366,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     // Playtime Tracking
     // =========================================================
     private void startPlaytimeTracking() {
-        if (mSessionStartTimeMs != 0) return;
         mSessionStartTimeMs = System.currentTimeMillis();
-        PlaytimeStats.startSession(this, mSessionStartTimeMs);
         mPlaytimeHandler = new Handler(Looper.getMainLooper());
         mPlaytimeRunnable = new Runnable() {
             @Override
@@ -395,8 +394,40 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     private void savePlaytimeSnapshot(boolean isFinalSave) {
         if (mSessionStartTimeMs == 0) return;
+        long now = System.currentTimeMillis();
+        long sessionDurationMs = now - mSessionStartTimeMs;
+        // For tick saves, add TICK_MS; for final save, add the remainder
+        long tickMs = isFinalSave ? (sessionDurationMs % PLAYTIME_TICK_MS) : PLAYTIME_TICK_MS;
+        if (tickMs <= 0) return;
+
         try {
-            PlaytimeStats.saveSessionProgress(this, mSessionStartTimeMs, isFinalSave);
+            SharedPreferences prefs = getApplicationContext()
+                .getSharedPreferences(PREFS_ONYX_DATA, MODE_PRIVATE);
+            SharedPreferences.Editor editor = prefs.edit();
+
+            // Total play time
+            long totalMs = prefs.getLong("stats_total_play_time_ms", 0L) + tickMs;
+            editor.putLong("stats_total_play_time_ms", totalMs);
+
+            // Weekly play time (reset if > 7 days since last reset)
+            long weekResetTs = prefs.getLong("stats_weekly_reset_ts", now);
+            long weekMs = prefs.getLong("stats_weekly_play_time_ms", 0L);
+            long oneWeekMs = 7L * 24 * 60 * 60 * 1000;
+            if (now - weekResetTs > oneWeekMs) {
+                weekMs = 0;
+                weekResetTs = now;
+                editor.putLong("stats_weekly_reset_ts", weekResetTs);
+            }
+            weekMs += tickMs;
+            editor.putLong("stats_weekly_play_time_ms", weekMs);
+
+            // Longest session
+            long longestMs = prefs.getLong("stats_longest_session_ms", 0L);
+            if (sessionDurationMs > longestMs) {
+                editor.putLong("stats_longest_session_ms", sessionDurationMs);
+            }
+
+            editor.apply();
         } catch (Exception e) {
             Log.e("PlaytimeTracker", "Error saving playtime stats", e);
         }

@@ -51,7 +51,7 @@ def getVersionName = {
     }else {
         if(TAG_PART_COMMIT.toString().trim() == ""){
              //Fallback no repo
-            return ("LOCAL-" + "${getDate()}")
+            return ("1.1")
         }else {
             // Used by github actions
             TAG_STRING =  'gladiolus-' + "${getDate()}" + "-" + TAG_PART_COMMIT.toString().trim()
@@ -72,41 +72,15 @@ def getVersionName = {
     return TAG_STRING.trim().replace("-g", "-") + "-" + BRANCH.toString().trim()
 }
 
-def getLocalProperty = { String propertyName ->
-    File localPropertiesFile = rootProject.file("local.properties");
-    if(!localPropertiesFile.canRead()) return null;
-    Properties properties = new Properties();
-    localPropertiesFile.withInputStream { stream -> properties.load(stream) }
-    String value = properties.getProperty(propertyName);
-    return value == null ? null : value.trim();
-}
-
-def getCurseforgeAccess = {
-    String proxyUrl = System.getenv("CURSEFORGE_PROXY_URL");
-    if(proxyUrl != null && !proxyUrl.trim().isEmpty()) return proxyUrl.trim();
-    String proxyProperty = findProperty("curseforgeProxyUrl");
-    if(proxyProperty != null && !proxyProperty.trim().isEmpty()) return proxyProperty.trim();
-    String localProxy = getLocalProperty("curseforge.proxy.url");
-    if(localProxy != null && !localProxy.trim().isEmpty()) return localProxy.trim();
+def getCFApiKey = {
     String key = System.getenv("CURSEFORGE_API_KEY");
-    if(key != null && !key.trim().isEmpty()) return key.trim();
-    String keyProperty = findProperty("curseforgeApiKey");
-    if(keyProperty != null && !keyProperty.trim().isEmpty()) return keyProperty.trim();
-    String localKey = getLocalProperty("curseforge.api.key");
-    if(localKey != null && !localKey.trim().isEmpty()) return localKey.trim();
-    List<File> curseforgeKeyFiles = [
-            rootProject.file("curseforge_key.txt"),
-            project.file("curseforge_key.txt"),
-            file("../curseforge_key.txt")
-    ];
-    for(File curseforgeKeyFile : curseforgeKeyFiles) {
-        if(curseforgeKeyFile.canRead() && curseforgeKeyFile.isFile()) {
-            String value = curseforgeKeyFile.text.trim();
-            if(!value.isEmpty()) return value;
-        }
+    if(key != null) return key;
+    File curseforgeKeyFile = new File("./curseforge_key.txt");
+    if(curseforgeKeyFile.canRead() && curseforgeKeyFile.isFile()) {
+        return curseforgeKeyFile.text;
     }
-    logger.warn('BUILD: No CurseForge API key or proxy URL configured. CurseForge API requests may be unavailable.');
-    return "";
+    logger.warn('BUILD: You have no CurseForge key, the curseforge api will get disabled !');
+    return "DUMMY";
 }
 
 configurations {
@@ -126,6 +100,12 @@ android {
     }
 
     signingConfigs {
+        customDebug {
+            storeFile file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
         googlePlayBuild {
             storeFile file("upload.jks")
             storePassword System.getenv("GPLAY_KEYSTORE_PASSWORD")
@@ -139,10 +119,10 @@ android {
         applicationId "com.cannon.onyxlauncher"
         minSdkVersion 21
         targetSdkVersion 35
-        versionCode getDateSeconds()
+        versionCode 3
         versionName getVersionName()
         multiDexEnabled true //important
-        resValue 'string', 'curseforge_api_key', getCurseforgeAccess()
+        resValue 'string', 'curseforge_api_key', getCFApiKey()
     }
 
     buildTypes {
@@ -151,6 +131,7 @@ android {
             minifyEnabled false
             shrinkResources false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.customDebug
             resValue 'string', 'application_package', 'com.cannon.onyxlauncher.debug'
             resValue 'string', 'storageProviderAuthorities', 'com.cannon.onyxlauncher.scoped.gamefolder.debug'
             resValue 'string', 'shareProviderAuthority', 'com.cannon.onyxlauncher.scoped.controlfolder.debug'
@@ -159,8 +140,6 @@ android {
             initWith debug
             minifyEnabled true
             shrinkResources true
-            debuggable false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         proguardNoDebug {
             initWith proguard
@@ -168,10 +147,12 @@ android {
         }
 
         release {
-            minifyEnabled true
-            shrinkResources true
-            debuggable false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // Don't set to true or java.awt will be a.a or something similar.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // defaultConfig already set
+            // multiDexEnabled = true
+            // debuggable = true
             resValue 'string', 'storageProviderAuthorities', 'com.cannon.onyxlauncher.scoped.gamefolder'
             resValue 'string', 'application_package', 'com.cannon.onyxlauncher'
         }
@@ -222,13 +203,9 @@ android {
 }
 
 afterEvaluate {
-    def runtimeJarTasks = [":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar"]
     tasks.configureEach { task ->
         if (task.name.startsWith("merge") && task.name.endsWith("Assets")) {
-            task.dependsOn(runtimeJarTasks)
-        }
-        if (task.name.toLowerCase(Locale.ROOT).contains("lint")) {
-            task.dependsOn(runtimeJarTasks)
+            task.dependsOn(":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar")
         }
     }
 }

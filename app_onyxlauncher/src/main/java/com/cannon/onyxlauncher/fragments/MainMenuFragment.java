@@ -50,25 +50,21 @@ public class MainMenuFragment extends Fragment {
         Button mPlayButton = view.findViewById(R.id.play_button);
         mVersionSpinner = view.findViewById(R.id.mc_version_spinner);
 
-        setClickListener(mNewsButton, v -> Tools.openURL(requireActivity(), Tools.URL_HOME));
-        setClickListener(mDiscordButton, v -> Tools.openURL(requireActivity(), getString(R.string.discord_invite)));
-        setClickListener(mCustomControlButton, v -> startActivity(new Intent(requireContext(), CustomControlsActivity.class)));
-        setClickListener(mInstallJarButton, v -> runInstallerWithConfirmation(false));
-        setLongClickListener(mInstallJarButton, v->{
+        mNewsButton.setOnClickListener(v -> Tools.openURL(requireActivity(), Tools.URL_HOME));
+        mDiscordButton.setOnClickListener(v -> Tools.openURL(requireActivity(), getString(R.string.discord_invite)));
+        mCustomControlButton.setOnClickListener(v -> startActivity(new Intent(requireContext(), CustomControlsActivity.class)));
+        mInstallJarButton.setOnClickListener(v -> runInstallerWithConfirmation(false));
+        mInstallJarButton.setOnLongClickListener(v->{
             runInstallerWithConfirmation(true);
             return true;
         });
-        setClickListener(mEditProfileButton, v -> {
-            if (mVersionSpinner != null) {
-                mVersionSpinner.openProfileEditor(requireActivity());
-            }
-        });
+        mEditProfileButton.setOnClickListener(v -> mVersionSpinner.openProfileEditor(requireActivity()));
 
-        setClickListener(mPlayButton, v -> ExtraCore.setValue(ExtraConstants.LAUNCH_GAME, true));
+        mPlayButton.setOnClickListener(v -> ExtraCore.setValue(ExtraConstants.LAUNCH_GAME, true));
 
-        setClickListener(mShareLogsButton, (v) -> shareLog(requireContext()));
+        mShareLogsButton.setOnClickListener((v) -> shareLog(requireContext()));
 
-        setClickListener(mOpenDirectoryButton, (v)-> {
+        mOpenDirectoryButton.setOnClickListener((v)-> {
             Tools.switchDemo(Tools.isDemoProfile(v.getContext())); // avoid switching accounts being able to access
             if(Tools.isDemoProfile(v.getContext())){
                 Toast.makeText(v.getContext(), R.string.toast_not_available_demo, Toast.LENGTH_LONG).show();
@@ -79,18 +75,10 @@ public class MainMenuFragment extends Fragment {
         });
 
 
-        setLongClickListener(mNewsButton, (v)->{
+        mNewsButton.setOnLongClickListener((v)->{
             Tools.swapFragment(requireActivity(), GamepadMapperFragment.class, GamepadMapperFragment.TAG, null);
             return true;
         });
-    }
-
-    private void setClickListener(@Nullable View target, View.OnClickListener listener) {
-        if (target != null) target.setOnClickListener(listener);
-    }
-
-    private void setLongClickListener(@Nullable View target, View.OnLongClickListener listener) {
-        if (target != null) target.setOnLongClickListener(listener);
     }
 
     private File getCurrentProfileDirectory() {
@@ -105,9 +93,7 @@ public class MainMenuFragment extends Fragment {
     @Override
     public void onResume() {
         super.onResume();
-        if (mVersionSpinner != null) {
-            mVersionSpinner.reloadProfiles();
-        }
+        mVersionSpinner.reloadProfiles();
     }
 
     private void runInstallerWithConfirmation(boolean isCustomArgs) {

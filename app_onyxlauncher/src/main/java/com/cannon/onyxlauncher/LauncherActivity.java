@@ -4,7 +4,6 @@ import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import android.Manifest;
 import android.app.NotificationManager;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -65,7 +64,6 @@ public class LauncherActivity extends BaseActivity {
     private ProgressServiceKeeper mProgressServiceKeeper;
     private ModloaderInstallTracker mInstallTracker;
     private NotificationManager mNotificationManager;
-    private boolean mRedirectingToOnyx;
 
     /* Allows to switch from one button "type" to another */
     private final FragmentManager.FragmentLifecycleCallbacks mFragmentCallbackListener = new FragmentManager.FragmentLifecycleCallbacks() {
@@ -168,16 +166,59 @@ public class LauncherActivity extends BaseActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        mRedirectingToOnyx = true;
-        startActivity(new Intent(this, OnyxMainActivity.class)
-                .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP));
-        finish();
+        setContentView(R.layout.activity_onyx_launcher);
+        FragmentManager fragmentManager = getSupportFragmentManager();
+        // If we don't have a back stack root yet...
+        if(fragmentManager.getBackStackEntryCount() < 1) {
+            // Manually add the first fragment to the backstack to get easily back to it
+            // There must be a better way to handle the root though...
+            // (artDev: No, there is not. I've spent days researching this for another unrelated project.)
+            fragmentManager.beginTransaction()
+                    .setReorderingAllowed(true)
+                    .addToBackStack("ROOT")
+                    .add(R.id.container_fragment, MainMenuFragment.class, null, "ROOT").commit();
+        }
+
+
+        IconCacheJanitor.runJanitor();
+        mRequestNotificationPermissionLauncher = registerForActivityResult(
+                new ActivityResultContracts.RequestPermission(),
+                isAllowed -> {
+                    if(!isAllowed) handleNoNotificationPermission();
+                    else {
+                        Runnable runnable = Tools.getWeakReference(mRequestNotificationPermissionRunnable);
+                        if(runnable != null) runnable.run();
+                    }
+                }
+        );
+        getWindow().setBackgroundDrawable(null);
+        bindViews();
+        checkNotificationPermission();
+        mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        ProgressKeeper.addTaskCountListener(mDoubleLaunchPreventionListener);
+        ProgressKeeper.addTaskCountListener((mProgressServiceKeeper = new ProgressServiceKeeper(this)));
+
+        mSettingsButton.setOnClickListener(mSettingButtonListener);
+        ProgressKeeper.addTaskCountListener(mProgressLayout);
+        ExtraCore.addExtraListener(ExtraConstants.BACK_PREFERENCE, mBackPreferenceListener);
+        ExtraCore.addExtraListener(ExtraConstants.SELECT_AUTH_METHOD, mSelectAuthMethod);
+
+        ExtraCore.addExtraListener(ExtraConstants.LAUNCH_GAME, mLaunchGameListener);
+
+        new AsyncVersionList().getVersionList(versions -> ExtraCore.setValue(ExtraConstants.RELEASE_TABLE, versions), false);
+
+        mInstallTracker = new ModloaderInstallTracker(this);
+
+        mProgressLayout.observe(ProgressLayout.DOWNLOAD_MINECRAFT);
+        mProgressLayout.observe(ProgressLayout.UNPACK_RUNTIME);
+        mProgressLayout.observe(ProgressLayout.INSTALL_MODPACK);
+        mProgressLayout.observe(ProgressLayout.AUTHENTICATE_MICROSOFT);
+        mProgressLayout.observe(ProgressLayout.DOWNLOAD_VERSION_LIST);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (mRedirectingToOnyx) return;
         ContextExecutor.setActivity(this);
         mInstallTracker.attach();
     }
@@ -185,7 +226,6 @@ public class LauncherActivity extends BaseActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        if (mRedirectingToOnyx) return;
         ContextExecutor.clearActivity();
         mInstallTracker.detach();
     }
@@ -193,14 +233,12 @@ public class LauncherActivity extends BaseActivity {
     @Override
     protected void onStart() {
         super.onStart();
-        if (mRedirectingToOnyx) return;
         getSupportFragmentManager().registerFragmentLifecycleCallbacks(mFragmentCallbackListener, true);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        if (mRedirectingToOnyx) return;
         mProgressLayout.cleanUpObservers();
         ProgressKeeper.removeTaskCountListener(mProgressLayout);
         ProgressKeeper.removeTaskCountListener(mProgressServiceKeeper);

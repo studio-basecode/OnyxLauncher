@@ -9,7 +9,6 @@ public class Constants {
     public static final int SOURCE_TECHNIC = 0x2;
     public static final int SOURCE_ATLAUNCHER = 0x3;
     public static final int SOURCE_FTB_LEGACY = 0x4;
-    public static final int SOURCE_LOCAL_PACK = 0x5;
 
     /** Modrinth api, file environments */
     public static final String MODRINTH_FILE_ENV_REQUIRED = "required";

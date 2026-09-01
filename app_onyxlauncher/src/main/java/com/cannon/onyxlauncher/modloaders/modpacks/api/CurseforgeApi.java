@@ -34,7 +34,7 @@ import java.util.zip.ZipFile;
 public class CurseforgeApi implements ModpackApi{
     private static final Pattern sMcVersionPattern = Pattern.compile("([0-9]+)\\.([0-9]+)\\.?([0-9]+)?");
     private static final int ALGO_SHA_1 = 1;
-    // Reference implementation:
+    // Stolen from
     // https://github.com/AnzhiZhang/CurseForgeModpackDownloader/blob/6cb3f428459f0cc8f444d16e54aea4cd1186fd7b/utils/requester.py#L93
     private static final int CURSEFORGE_MINECRAFT_GAME_ID = 432;
     private static final int CURSEFORGE_MODPACK_CLASS_ID = 4471;
@@ -47,22 +47,7 @@ public class CurseforgeApi implements ModpackApi{
 
     private final ApiHandler mApiHandler;
     public CurseforgeApi(String apiKey) {
-        mApiHandler = createApiHandler(apiKey);
-    }
-
-    static ApiHandler createApiHandler(String apiKeyOrProxyUrl) {
-        String value = apiKeyOrProxyUrl == null ? "" : apiKeyOrProxyUrl.trim();
-        if (value.startsWith("http://") || value.startsWith("https://")) {
-            return new ApiHandler(trimTrailingSlash(value));
-        }
-        return new ApiHandler("https://api.curseforge.com/v1", value);
-    }
-
-    private static String trimTrailingSlash(String value) {
-        while (value.endsWith("/")) {
-            value = value.substring(0, value.length() - 1);
-        }
-        return value;
+        mApiHandler = new ApiHandler("https://api.curseforge.com/v1", apiKey);
     }
 
     @Override
@@ -320,14 +305,9 @@ public class CurseforgeApi implements ModpackApi{
             case "fabric":
                 modLoaderTypeInt = ModLoader.MOD_LOADER_FABRIC;
                 break;
-            case "quilt":
-                modLoaderTypeInt = ModLoader.MOD_LOADER_QUILT;
-                break;
-            case "neoforge":
-                modLoaderTypeInt = ModLoader.MOD_LOADER_NEOFORGE;
-                break;
             default:
                 return null;
+            //TODO: Quilt is also Forge? How does that work?
         }
         return new ModLoader(modLoaderTypeInt, modLoaderVersion, minecraft.version);
     }

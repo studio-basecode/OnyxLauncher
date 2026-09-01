@@ -24,15 +24,13 @@
     <application
         android:name=".OnyxApplication"
         android:extractNativeLibs="true"
-        android:allowBackup="false"
-        android:fullBackupContent="false"
+        android:allowBackup="true"
         android:allowNativeHeapPointerTagging="false"
         android:appCategory="game"
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
         android:isGame="true"
         android:label="@string/app_name"
-        android:usesCleartextTraffic="false"
         android:process=":launcher"
         android:resizeableActivity="true"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -49,8 +47,7 @@
             android:name=".OnyxMainActivity"
             android:exported="true"
             android:label="@string/app_short_name"
-            android:launchMode="singleTop"
-            android:screenOrientation="portrait">
+            android:launchMode="singleTop">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -60,7 +57,6 @@
         <activity
             android:name=".LauncherActivity"
             android:label="@string/app_short_name"
-            android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"/>
         <activity
             android:name=".ImportControlActivity"
@@ -97,12 +93,12 @@
             android:process=":gui_installer"
             android:name=".JavaGUILauncherActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="sensorLandscape" />
         <activity
             android:name=".CustomControlsActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|keyboard|navigation"
             android:exported="false"
-            android:screenOrientation="landscape">
+            android:screenOrientation="sensorLandscape">
             <intent-filter>
                 <action android:name=".CustomControlsActivity" />
 
@@ -114,7 +110,7 @@
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
             android:launchMode="singleTop"
             android:process=":game"
-            android:screenOrientation="landscape" />
+            android:screenOrientation="sensorLandscape" />
 
         <provider
             android:name=".scoped.FolderProvider"
@@ -139,9 +135,6 @@
 
         <service android:name=".services.ProgressService"
             android:foregroundServiceType="dataSync"/>
-        <service
-            android:name=".services.ModpackInstallService"
-            android:foregroundServiceType="dataSync" />
         <service android:name=".services.GameService" android:process=":game"
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

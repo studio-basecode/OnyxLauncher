@@ -3,7 +3,7 @@ package com.cannon.onyxlauncher.modloaders.modpacks.api;
 import android.content.Context;
 import android.content.Intent;
 
-import com.cannon.onyxlauncher.OnyxMainActivity;
+import com.cannon.onyxlauncher.LauncherActivity;
 import com.cannon.onyxlauncher.R;
 import com.cannon.onyxlauncher.Tools;
 import com.cannon.onyxlauncher.modloaders.ModloaderDownloadListener;
@@ -25,8 +25,7 @@ public class NotificationDownloadListener implements ModloaderDownloadListener {
     public void onDownloadFinished(File downloadedFile) {
         if(mModLoader.requiresGuiInstallation()) {
             ModloaderInstallTracker.saveModLoader(mContext, mModLoader, downloadedFile);
-            Intent mainActivityIntent = new Intent(mContext, OnyxMainActivity.class);
-            mainActivityIntent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            Intent mainActivityIntent = new Intent(mContext, LauncherActivity.class);
             sendIntentNotification(mainActivityIntent, R.string.modpack_install_notification_success);
         }
     }

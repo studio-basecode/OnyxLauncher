@@ -123,6 +123,33 @@ public class NewJREUtil {
         String profileRuntime = Tools.getSelectedRuntime(minecraftProfile);
         Runtime runtime = MultiRTUtils.read(profileRuntime);
 
+        // If the profile uses an internal runtime (e.g. Internal-25), but the recommended internal runtime for this game version is different (e.g. Internal-21 for Java 21 / MC 1.21.1),
+        // switch to the recommended internal runtime to prevent mod dependency mismatches (like Fabric mod 'depends java @ [21]').
+        String recommendedRuntimeName = getRecommendedInternalRuntimeName(gameRequiredVersion);
+        if (profileRuntime != null && profileRuntime.startsWith("Internal-") && !profileRuntime.equals(recommendedRuntimeName)) {
+            InternalRuntime recInternalRuntime = null;
+            for (InternalRuntime ir : InternalRuntime.values()) {
+                if (ir.name.equals(recommendedRuntimeName)) {
+                    recInternalRuntime = ir;
+                    break;
+                }
+            }
+            if (recInternalRuntime != null) {
+                if (!checkInternalRuntime(assetManager, recInternalRuntime)) {
+                    try {
+                        downloadAndInstallJre(activity, recInternalRuntime.majorVersion);
+                    } catch (IOException e) {
+                        Log.w("NewJREUtil", "Failed to install recommended runtime " + recommendedRuntimeName, e);
+                    }
+                }
+                if (Tools.isRuntimeInstalled(recInternalRuntime.name) || isBundledInternalRuntime(assetManager, recInternalRuntime)) {
+                    minecraftProfile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + recInternalRuntime.name;
+                    LauncherProfiles.write();
+                    return true;
+                }
+            }
+        }
+
         // If the runtime reports javaVersion=0 (not yet installed), try to extract the major version
         // directly from the name (e.g. "Internal-21" → 21) so we respect the user's explicit choice.
         int effectiveRuntimeVersion = runtime.javaVersion;

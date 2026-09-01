@@ -10,7 +10,6 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.Process;
-import android.os.SystemClock;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -20,24 +19,17 @@ import androidx.core.content.ContextCompat;
 
 import com.cannon.onyxlauncher.R;
 import com.cannon.onyxlauncher.Tools;
-import com.cannon.onyxlauncher.progresskeeper.ProgressListener;
 import com.cannon.onyxlauncher.progresskeeper.ProgressKeeper;
 import com.cannon.onyxlauncher.progresskeeper.TaskCountListener;
 import com.cannon.onyxlauncher.utils.NotificationUtils;
-import com.kdt.mcgui.ProgressLayout;
 
 /**
  * Lazy service which allows the process not to get killed.
  * Can be created from context, can be killed statically
  */
-public class ProgressService extends Service implements TaskCountListener, ProgressListener {
-    private static final long NOTIFICATION_UPDATE_MIN_INTERVAL_MS = 750L;
+public class ProgressService extends Service implements TaskCountListener {
 
     private NotificationManagerCompat notificationManagerCompat;
-    private String currentProgressText;
-    private int currentProgress;
-    private long lastNotificationUpdateMs;
-    private boolean progressListenerAttached;
 
     /** Simple wrapper to start the service */
     public static void startService(Context context){
@@ -59,9 +51,7 @@ public class ProgressService extends Service implements TaskCountListener, Progr
                 .setContentTitle(getString(R.string.lazy_service_default_title))
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel,  getString(R.string.notification_terminate), pendingKillIntent)
                 .setSmallIcon(R.drawable.notif_icon)
-                .setOnlyAlertOnce(true)
                 .setNotificationSilent();
-        currentProgressText = getString(R.string.progresslayout_tasks_in_progress, ProgressKeeper.getTaskCount());
     }
 
     @SuppressLint("StringFormatInvalid")
@@ -83,13 +73,7 @@ public class ProgressService extends Service implements TaskCountListener, Progr
             startForeground(NotificationUtils.NOTIFICATION_ID_PROGRESS_SERVICE, notification);
         }
         if(ProgressKeeper.getTaskCount() < 1) stopSelf();
-        else {
-            ProgressKeeper.addTaskCountListener(this, false);
-            if(!progressListenerAttached) {
-                ProgressKeeper.addListener(ProgressLayout.INSTALL_MODPACK, this);
-                progressListenerAttached = true;
-            }
-        }
+        else ProgressKeeper.addTaskCountListener(this, false);
 
         return START_NOT_STICKY;
     }
@@ -103,10 +87,6 @@ public class ProgressService extends Service implements TaskCountListener, Progr
     @Override
     public void onDestroy() {
         ProgressKeeper.removeTaskCountListener(this);
-        if(progressListenerAttached) {
-            ProgressKeeper.removeListener(ProgressLayout.INSTALL_MODPACK, this);
-            progressListenerAttached = false;
-        }
     }
 
     @Override
@@ -118,48 +98,6 @@ public class ProgressService extends Service implements TaskCountListener, Progr
             }else{
                 stopSelf();
             }
-        });
-    }
-
-    @Override
-    public void onProgressStarted() {
-        updateProgressNotification(currentProgress, currentProgressText, true);
-    }
-
-    @Override
-    public void onProgressUpdated(int progress, int resid, Object... va) {
-        String text = currentProgressText;
-        if(resid != -1) {
-            try {
-                text = getString(resid, va);
-            } catch(Exception ignored) {
-                text = getString(R.string.status_installing);
-            }
-        } else if(va != null && va.length > 0 && va[0] instanceof String) {
-            text = (String) va[0];
-        }
-        updateProgressNotification(progress, text, progress < 0 || progress > 100);
-    }
-
-    @Override
-    public void onProgressEnded() {
-        mNotificationBuilder.setProgress(0, 0, false);
-    }
-
-    private void updateProgressNotification(int progress, String text, boolean indeterminate) {
-        Tools.MAIN_HANDLER.post(() -> {
-            currentProgress = Math.max(0, Math.min(100, progress));
-            currentProgressText = text;
-            long now = SystemClock.elapsedRealtime();
-            if(currentProgress > 0 && currentProgress < 100 &&
-                    now - lastNotificationUpdateMs < NOTIFICATION_UPDATE_MIN_INTERVAL_MS) {
-                return;
-            }
-            lastNotificationUpdateMs = now;
-            mNotificationBuilder
-                    .setContentText(text)
-                    .setProgress(100, currentProgress, indeterminate);
-            notificationManagerCompat.notify(NotificationUtils.NOTIFICATION_ID_PROGRESS_SERVICE, mNotificationBuilder.build());
         });
     }
 }

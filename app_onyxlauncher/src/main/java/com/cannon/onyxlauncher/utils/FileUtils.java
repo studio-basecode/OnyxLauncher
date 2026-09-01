@@ -21,7 +21,7 @@ public class FileUtils {
     public static String getFileName(String pathOrUrl) {
         int lastSlashIndex = pathOrUrl.lastIndexOf('/');
         if(lastSlashIndex == -1) return null;
-        return pathOrUrl.substring(lastSlashIndex + 1);
+        return pathOrUrl.substring(lastSlashIndex);
     }
 
     /**
@@ -64,12 +64,10 @@ public class FileUtils {
      * @throws IOException when the checks fail
      */
     public static void ensureDirectory(File targetFile) throws IOException{
-        if(targetFile.isFile()) throw new IOException("Target directory is a file: " + targetFile);
+        if(targetFile.isFile()) throw new IOException("Target directory is a file");
         if(targetFile.exists()) {
-            if(!targetFile.canWrite()) throw new IOException("Target directory is not writable: " + targetFile);
-        }else if(!targetFile.mkdirs() && !targetFile.isDirectory()) {
-            throw new IOException("Unable to create target directory: " + targetFile);
-        }
+            if(!targetFile.canWrite()) throw new IOException("Target directory is not writable");
+        }else if(!targetFile.mkdirs()) throw new IOException("Unable to create target directory");
     }
 
     /**
@@ -79,7 +77,7 @@ public class FileUtils {
      */
     public static void ensureParentDirectory(File targetFile) throws IOException{
         File parentFile = targetFile.getParentFile();
-        if(parentFile == null) throw new IOException("targetFile does not have a parent: " + targetFile);
+        if(parentFile == null) throw new IOException("targetFile does not have a parent");
         ensureDirectory(parentFile);
     }
 }

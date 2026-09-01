@@ -171,44 +171,6 @@ public class JREUtils {
     }
 
     public static void setJavaEnvironment(Activity activity, String jreHome) throws Throwable {
-        setJavaEnvironment(activity, jreHome, true);
-    }
-
-    private static void unsetGraphicsEnvironment() {
-        String[] keys = new String[] {
-                "ONYX_RENDERER",
-                "POJAV_RENDERER",
-                "ONYX_LOAD_TURNIP",
-                "POJAV_LOAD_TURNIP",
-                "ONYX_VSYNC_IN_ZINK",
-                "POJAV_VSYNC_IN_ZINK",
-                "MESA_LOADER_DRIVER_OVERRIDE",
-                "GALLIUM_DRIVER",
-                "MESA_GL_VERSION_OVERRIDE",
-                "MESA_GLSL_VERSION_OVERRIDE",
-                "VTEST_SOCKET_NAME",
-                "LIBGL_ES",
-                "LIBGL_GL",
-                "LIBGL_MIPMAP",
-                "LIBGL_NOERROR",
-                "LIBGL_CUSTOMVERSION",
-                "LIBGL_NOINTOVLHACK",
-                "LIBGL_NORMALIZE",
-                "LIBGL_VGPU_DUMP",
-                "FORCE_VSYNC",
-                "POJAV_BIG_CORE_AFFINITY",
-                "ONYX_BIG_CORE_AFFINITY"
-        };
-        for(String key : keys) {
-            try {
-                Os.unsetenv(key);
-            } catch (ErrnoException exception) {
-                Log.w("JREUtils", "Failed to unset " + key, exception);
-            }
-        }
-    }
-
-    public static void setJavaEnvironment(Activity activity, String jreHome, boolean enableGraphicsEnvironment) throws Throwable {
         Map<String, String> envMap = new ArrayMap<>();
         envMap.put("ONYX_NATIVEDIR", NATIVE_LIB_DIR);
         // Alias: prebuilt MC mods/libraries (e.g. Sodium) may still check for POJAV_NATIVEDIR
@@ -216,58 +178,47 @@ public class JREUtils {
         envMap.put("JAVA_HOME", jreHome);
         envMap.put("HOME", Tools.DIR_GAME_HOME);
         envMap.put("TMPDIR", Tools.DIR_CACHE.getAbsolutePath());
-        if(enableGraphicsEnvironment) {
-            // gl4es value 3 disables translator-side mipmap creation/use. This keeps
-            // resource packs from exercising fragile GLES mipmap paths on mobile drivers.
-            envMap.put("LIBGL_MIPMAP", "3");
+        envMap.put("LIBGL_MIPMAP", "0"); // Disable gl4es-side mipmapping to prevent texture pack (TXT) crashes on Adreno 750
 
-            // Prevent OptiFine (and other error-reporting stuff in Minecraft) from balooning the log
-            envMap.put("LIBGL_NOERROR", "1");
-            envMap.put("LIBGL_CUSTOMVERSION", "3.3.0"); // Custom GL version for Iris shader compatibility
+        // Prevent OptiFine (and other error-reporting stuff in Minecraft) from balooning the log
+        envMap.put("LIBGL_NOERROR", "1");
+        envMap.put("LIBGL_CUSTOMVERSION", "3.3.0"); // Custom GL version for Iris shader compatibility
 
-            // On certain GLES drivers, overloading default functions shader hack fails, so disable it
-            envMap.put("LIBGL_NOINTOVLHACK", "1");
+        // On certain GLES drivers, overloading default functions shader hack fails, so disable it
+        envMap.put("LIBGL_NOINTOVLHACK", "1");
 
-            // Fix white color on banner and sheep, since GL4ES 1.1.5
-            envMap.put("LIBGL_NORMALIZE", "1");
+        // Fix white color on banner and sheep, since GL4ES 1.1.5
+        envMap.put("LIBGL_NORMALIZE", "1");
 
-            if(PREF_DUMP_SHADERS)
-                envMap.put("LIBGL_VGPU_DUMP", "1");
-            if(PREF_VSYNC_IN_ZINK && !shouldSkipZinkVsync()) {
-                envMap.put("ONYX_VSYNC_IN_ZINK", "1");
-                envMap.put("POJAV_VSYNC_IN_ZINK", "1"); // alias for prebuilt libs
-            } else if(PREF_VSYNC_IN_ZINK && "vulkan_zink".equals(LOCAL_RENDERER)) {
-                Log.i("JREUtils", "Skipping Zink V-Sync hook on this Android version for stability");
-            }
-            if(Tools.deviceHasHangingLinker()) {
-                envMap.put("ONYX_EMUI_ITERATOR_MITIGATE", "1");
-                envMap.put("POJAV_EMUI_ITERATOR_MITIGATE", "1"); // alias for prebuilt libs
-            }
 
-            // The OPEN GL version is changed according
-            String selectedOpenGlVersion = (String) ExtraCore.getValue(ExtraConstants.OPEN_GL_VERSION);
-            if(selectedOpenGlVersion != null && !selectedOpenGlVersion.isEmpty()) {
-                envMap.put("LIBGL_ES", selectedOpenGlVersion);
-                if ("3".equals(selectedOpenGlVersion)) {
-                    envMap.put("LIBGL_GL", "33");
-                }
-            }
+        if(PREF_DUMP_SHADERS)
+            envMap.put("LIBGL_VGPU_DUMP", "1");
+        if(PREF_VSYNC_IN_ZINK) {
+            envMap.put("ONYX_VSYNC_IN_ZINK", "1");
+            envMap.put("POJAV_VSYNC_IN_ZINK", "1"); // alias for prebuilt libs
+        }
+        if(Tools.deviceHasHangingLinker()) {
+            envMap.put("ONYX_EMUI_ITERATOR_MITIGATE", "1");
+            envMap.put("POJAV_EMUI_ITERATOR_MITIGATE", "1"); // alias for prebuilt libs
+        }
 
-            envMap.put("FORCE_VSYNC", String.valueOf(LauncherPreferences.PREF_FORCE_VSYNC));
 
-            envMap.put("MESA_GLSL_CACHE_DIR", Tools.DIR_CACHE.getAbsolutePath());
-            envMap.put("force_glsl_extensions_warn", "true");
-            envMap.put("allow_higher_compat_version", "true");
-            envMap.put("allow_glsl_extension_directive_midshader", "true");
-            if ("vulkan_zink".equals(LOCAL_RENDERER)) {
-                envMap.put("MESA_LOADER_DRIVER_OVERRIDE", "zink");
-                envMap.put("GALLIUM_DRIVER", "zink");
-                envMap.put("MESA_GL_VERSION_OVERRIDE", "4.6");
-                envMap.put("MESA_GLSL_VERSION_OVERRIDE", "460");
-                envMap.put("VTEST_SOCKET_NAME", new File(Tools.DIR_CACHE, ".virgl_test").getAbsolutePath());
-            }
-        } else {
-            unsetGraphicsEnvironment();
+        // The OPEN GL version is changed according
+        String selectedOpenGlVersion = (String) ExtraCore.getValue(ExtraConstants.OPEN_GL_VERSION);
+        envMap.put("LIBGL_ES", selectedOpenGlVersion);
+        if ("3".equals(selectedOpenGlVersion)) {
+            envMap.put("LIBGL_GL", "33");
+        }
+
+        envMap.put("FORCE_VSYNC", String.valueOf(LauncherPreferences.PREF_FORCE_VSYNC));
+
+        envMap.put("MESA_GLSL_CACHE_DIR", Tools.DIR_CACHE.getAbsolutePath());
+        envMap.put("force_glsl_extensions_warn", "true");
+        envMap.put("allow_higher_compat_version", "true");
+        envMap.put("allow_glsl_extension_directive_midshader", "true");
+        if ("vulkan_zink".equals(LOCAL_RENDERER)) {
+            envMap.put("MESA_LOADER_DRIVER_OVERRIDE", "zink");
+            envMap.put("VTEST_SOCKET_NAME", new File(Tools.DIR_CACHE, ".virgl_test").getAbsolutePath());
         }
 
         envMap.put("LD_LIBRARY_PATH", LD_LIBRARY_PATH);
@@ -277,7 +228,7 @@ public class JREUtils {
             envMap.put("POJAV_FFMPEG_PATH", FFmpegPlugin.executablePath); // alias for prebuilt libs
         }
 
-        if(enableGraphicsEnvironment && LOCAL_RENDERER != null) {
+        if(LOCAL_RENDERER != null) {
             // Android 12 and below (API <= 31): gl4es GLES2 backend does not implement
             // glMapBufferRange correctly - it returns NULL without setting a GL error.
             // LWJGL 3.3.3+ throws "Can't map buffer, opengl error 0" as a result.
@@ -290,6 +241,7 @@ public class JREUtils {
                 Log.i("JREUtils", "Forcing opengles3 renderer to fix glMapBufferRange crash (GLES3 backend)");
             }
             envMap.put("ONYX_RENDERER", effectiveRenderer);
+            envMap.put("POJAV_RENDERER", effectiveRenderer); // alias for prebuilt MC mods (e.g. Sodium/Iris)
             if (effectiveRenderer.equals("opengles3") || effectiveRenderer.equals("opengles3_ltw")) {
                 envMap.put("LIBGL_ES", "3");
                 // Set custom GL version string so mods like Iris can parse the GL version reliably without throwing "Could not parse GL version from ''"
@@ -300,7 +252,7 @@ public class JREUtils {
                 }
             }
         }
-        if(enableGraphicsEnvironment && LauncherPreferences.PREF_BIG_CORE_AFFINITY) {
+        if(LauncherPreferences.PREF_BIG_CORE_AFFINITY) {
             envMap.put("ONYX_BIG_CORE_AFFINITY", "1");
             envMap.put("POJAV_BIG_CORE_AFFINITY", "1"); // alias for prebuilt libs
         }
@@ -308,7 +260,7 @@ public class JREUtils {
         envMap.put("AWTSTUB_HEIGHT", Integer.toString(CallbackBridge.windowHeight > 0 ? CallbackBridge.windowHeight : CallbackBridge.physicalHeight));
 
         GLInfoUtils.GLInfo info = GLInfoUtils.getGlInfo();
-        if(enableGraphicsEnvironment && !envMap.containsKey("LIBGL_ES") && LOCAL_RENDERER != null) {
+        if(!envMap.containsKey("LIBGL_ES") && LOCAL_RENDERER != null) {
             int glesMajor = info.glesMajorVersion;
             Log.i("glesDetect","GLES version detected: "+glesMajor);
 
@@ -324,28 +276,14 @@ public class JREUtils {
             }
         }
 
-        if(enableGraphicsEnvironment && info.isAdreno() && !PREF_ZINK_PREFER_SYSTEM_DRIVER) {
+        if(info.isAdreno() && !PREF_ZINK_PREFER_SYSTEM_DRIVER) {
             envMap.put("ONYX_LOAD_TURNIP", "1");
             envMap.put("POJAV_LOAD_TURNIP", "1"); // alias for prebuilt libs
-            if(info.renderer != null && info.renderer.contains("750")) {
-                Log.i("JREUtils", "Using Turnip Vulkan overlay on Adreno 750 for Zink shader stability");
-            }
         }
 
-        if(enableGraphicsEnvironment) {
-            readCustomEnv(envMap); // Must be last so it overrides anything the user sets for obvious reasons.
-        }
-        // Sodium 0.6+ aborts on Android when POJAV_RENDERER is present. The native bridge uses
-        // ONYX_RENDERER, so keep the Onyx variable and make sure the legacy alias is absent.
-        envMap.remove("POJAV_RENDERER");
-        try {
-            Os.unsetenv("POJAV_RENDERER");
-        } catch (ErrnoException exception) {
-            Log.w("JREUtils", "Failed to unset POJAV_RENDERER", exception);
-        }
+        readCustomEnv(envMap); // Must be last so it overrides anything the user sets for obvious reasons.
 
         for (Map.Entry<String, String> env : envMap.entrySet()) {
-            if(env.getValue() == null) continue;
             Logger.appendToLog("Added custom env: " + env.getKey() + "=" + env.getValue());
             try {
                 Os.setenv(env.getKey(), env.getValue(), true);
@@ -377,290 +315,15 @@ public class JREUtils {
             reader.close();
         }
     }
-
-    private static boolean shouldSkipZinkVsync() {
-        return "vulkan_zink".equals(LOCAL_RENDERER) && Build.VERSION.SDK_INT >= 35;
-    }
-
-    private static void applyRendererCompatibilityPolicy(Context context, File gameDirectory) {
-        File effectiveGameDirectory = gameDirectory == null ? new File(Tools.DIR_GAME_NEW) : gameDirectory;
-        if(MobileProfileOptimizer.isExtremePack(effectiveGameDirectory)) {
-            if("vulkan_zink".equals(LOCAL_RENDERER)) {
-                Log.i("JREUtils", "Keeping extreme modpack off Zink to avoid GL memory pressure");
-                Logger.appendToLog("Info: Keeping extreme modpack on Holy GL4ES to avoid Zink GL memory pressure");
-                Tools.LOCAL_RENDERER = "opengles2";
-            }
-            return;
-        }
-        if(LOCAL_RENDERER == null || !LOCAL_RENDERER.startsWith("opengles")) return;
-        if(!Tools.checkRendererCompatible(context, "vulkan_zink")) return;
-
-        if(!usesModernShaderPipeline(effectiveGameDirectory)) return;
-
-        Log.i("JREUtils", "Switching renderer from " + LOCAL_RENDERER + " to vulkan_zink for Sodium/Iris shader stability");
-        Logger.appendToLog("Info: Switching renderer from " + LOCAL_RENDERER + " to vulkan_zink for Sodium/Iris shader stability");
-        Tools.LOCAL_RENDERER = "vulkan_zink";
-    }
-
-    private static boolean usesModernShaderPipeline(File gameDirectory) {
-        return hasKnownModernRendererMod(gameDirectory) || hasEnabledShaderPack(gameDirectory);
-    }
-
-    private static boolean hasKnownModernRendererMod(File gameDirectory) {
-        File modsDir = new File(gameDirectory, "mods");
-        File[] mods = modsDir.listFiles(file -> file.isFile() && file.getName().endsWith(".jar"));
-        if(mods == null) return false;
-
-        for(File mod : mods) {
-            String name = mod.getName().toLowerCase(Locale.ROOT);
-            if(name.contains("sodium") ||
-                    name.contains("iris") ||
-                    name.contains("optifine") ||
-                    name.contains("oculus") ||
-                    name.contains("embeddium") ||
-                    name.contains("rubidium")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasEnabledShaderPack(File gameDirectory) {
-        if(hasEnabledShaderPackProperty(new File(gameDirectory, "config/iris.properties"))) return true;
-        return hasEnabledShaderPackProperty(new File(gameDirectory, "optionsshaders.txt"));
-    }
-
-    private static boolean hasEnabledShaderPackProperty(File file) {
-        if(!file.isFile()) return false;
-        Properties properties = new Properties();
-        try(FileInputStream inputStream = new FileInputStream(file)) {
-            properties.load(inputStream);
-        } catch (IOException e) {
-            Log.w("JREUtils", "Failed to inspect shader config " + file, e);
-            return false;
-        }
-
-        String enabled = properties.getProperty("enableShaders");
-        String shaderPack = properties.getProperty("shaderPack", "").trim();
-        boolean shaderPackSelected = !shaderPack.isEmpty() &&
-                !"off".equalsIgnoreCase(shaderPack) &&
-                !"(off)".equalsIgnoreCase(shaderPack);
-        return shaderPackSelected && (enabled == null || Boolean.parseBoolean(enabled));
-    }
-
-    private static void stabilizeIrisSodiumStack(File gameDirectory) {
-        File effectiveGameDirectory = gameDirectory == null ? new File(Tools.DIR_GAME_NEW) : gameDirectory;
-        File modsDir = new File(effectiveGameDirectory, "mods");
-        File[] mods = modsDir.listFiles(file -> file.isFile() && file.getName().endsWith(".jar"));
-        if(mods == null) return;
-
-        ArrayList<File> irisJarsToDelete = new ArrayList<>();
-        ArrayList<File> sodiumJarsToDelete = new ArrayList<>();
-        boolean needsStableIrisStack = false;
-        boolean hasCompatibleSodium = false;
-
-        for(File mod : mods) {
-            String fabricModJson = readJarEntry(mod, "fabric.mod.json");
-            if(fabricModJson == null) continue;
-
-            String modId = extractJsonString(fabricModJson, "id");
-            String version = extractJsonString(fabricModJson, "version");
-            if("iris".equals(modId)) {
-                boolean betaIrisWithSodium08 = version.toLowerCase(Locale.ROOT).contains("beta") &&
-                        fabricModJson.contains("\"sodium\"") &&
-                        fabricModJson.contains("0.8.x");
-                if(betaIrisWithSodium08) {
-                    needsStableIrisStack = true;
-                    irisJarsToDelete.add(mod);
-                }
-            } else if("sodium".equals(modId)) {
-                if(version.startsWith("0.6.")) {
-                    hasCompatibleSodium = true;
-                } else {
-                    sodiumJarsToDelete.add(mod);
-                }
-            }
-        }
-
-        if(!needsStableIrisStack) return;
-
-        try {
-            File stableIris = new File(modsDir, "Iris 1.8.8 for Fabric 1.21.1-onyx.jar");
-            File stableSodium = new File(modsDir, "Sodium 0.6.13 for Fabric 1.21.1-onyx.jar");
-            downloadIfMissing("https://cdn.modrinth.com/data/YL57xq9U/versions/zsoi0dso/iris-fabric-1.8.8%2Bmc1.21.1.jar", stableIris);
-            if(!hasCompatibleSodium) {
-                downloadIfMissing("https://cdn.modrinth.com/data/AANobbMI/versions/u1OEbNKx/sodium-fabric-0.6.13%2Bmc1.21.1.jar", stableSodium);
-            }
-
-            for(File file : irisJarsToDelete) deleteModJar(file);
-            for(File file : sodiumJarsToDelete) deleteModJar(file);
-            Log.i("JREUtils", "Replaced beta Iris/Sodium stack with Iris 1.8.8 and Sodium 0.6.13");
-            Logger.appendToLog("Info: Replaced beta Iris/Sodium stack with stable 1.21.1-compatible mods");
-        } catch (IOException e) {
-            Log.e("JREUtils", "Failed to stabilize Iris/Sodium stack", e);
-            Logger.appendToLog("Warning: Failed to stabilize Iris/Sodium stack: " + e.getMessage());
-        }
-    }
-
-    private static void stabilizeIrisShaderOptions(File gameDirectory) {
-        File effectiveGameDirectory = gameDirectory == null ? new File(Tools.DIR_GAME_NEW) : gameDirectory;
-        GLInfoUtils.GLInfo info = GLInfoUtils.getGlInfo();
-        if(info.renderer == null || !info.renderer.contains("750")) return;
-
-        File irisConfigFile = new File(effectiveGameDirectory, "config/iris.properties");
-        if(!irisConfigFile.isFile()) return;
-
-        Properties irisProperties = new Properties();
-        try(FileInputStream inputStream = new FileInputStream(irisConfigFile)) {
-            irisProperties.load(inputStream);
-        } catch (IOException e) {
-            Log.w("JREUtils", "Failed to read Iris config", e);
-            return;
-        }
-
-        if(!Boolean.parseBoolean(irisProperties.getProperty("enableShaders", "true"))) return;
-        String shaderPack = irisProperties.getProperty("shaderPack", "").trim();
-        if(shaderPack.isEmpty() || "off".equalsIgnoreCase(shaderPack) || "(off)".equalsIgnoreCase(shaderPack)) return;
-        if(!shaderPack.toLowerCase(Locale.ROOT).contains("photon")) return;
-
-        File shaderPackFile = new File(new File(effectiveGameDirectory, "shaderpacks"), shaderPack);
-        if(!shaderPackFile.isFile()) return;
-
-        File optionsFile = new File(shaderPackFile.getParentFile(), shaderPack + ".txt");
-        Properties options = new Properties();
-        if(optionsFile.isFile()) {
-            try(FileInputStream inputStream = new FileInputStream(optionsFile)) {
-                options.load(inputStream);
-            } catch (IOException e) {
-                Log.w("JREUtils", "Failed to read Iris shader options " + optionsFile.getName(), e);
-            }
-        }
-
-        boolean changed = false;
-        changed |= putIfDifferent(options, "INFO", "0");
-        changed |= putIfDifferent(options, "shadowMapResolution", "1024");
-        changed |= putIfDifferent(options, "ENTITY_SHADOWS", "false");
-        changed |= putIfDifferent(options, "ENVIRONMENT_REFLECTIONS", "false");
-        changed |= putIfDifferent(options, "SHADOW_COLOR", "false");
-        changed |= putIfDifferent(options, "SHADOW_SSRT", "false");
-        changed |= putIfDifferent(options, "SHADOW_VPS", "false");
-        changed |= putIfDifferent(options, "SH_SKYLIGHT", "false");
-        changed |= putIfDifferent(options, "VL", "false");
-        changed |= putIfDifferent(options, "WATER_PARALLAX", "false");
-
-        if(!changed) return;
-
-        try {
-            File parent = optionsFile.getParentFile();
-            if(parent != null && !parent.isDirectory() && !parent.mkdirs()) {
-                throw new IOException("Could not create " + parent);
-            }
-            try(FileOutputStream outputStream = new FileOutputStream(optionsFile)) {
-                options.store(outputStream, "Onyx Adreno 750 Photon safety profile");
-            }
-            Log.i("JREUtils", "Applied Adreno 750 safe Iris shader options for Photon");
-            Logger.appendToLog("Info: Applied Adreno 750 safe Iris shader options for Photon");
-        } catch (IOException e) {
-            Log.w("JREUtils", "Failed to write Iris shader options " + optionsFile.getName(), e);
-        }
-    }
-
-    private static boolean putIfDifferent(Properties properties, String key, String value) {
-        if(value.equals(properties.getProperty(key))) return false;
-        properties.setProperty(key, value);
-        return true;
-    }
-
-    private static String readJarEntry(File jarFile, String entryName) {
-        try(java.util.zip.ZipFile zipFile = new java.util.zip.ZipFile(jarFile)) {
-            java.util.zip.ZipEntry entry = zipFile.getEntry(entryName);
-            if(entry == null) return null;
-            try(InputStream inputStream = zipFile.getInputStream(entry)) {
-                return new String(readAllBytes(inputStream), java.nio.charset.StandardCharsets.UTF_8);
-            }
-        } catch (IOException e) {
-            Log.w("JREUtils", "Failed to read " + entryName + " from " + jarFile.getName(), e);
-            return null;
-        }
-    }
-
-    private static byte[] readAllBytes(InputStream inputStream) throws IOException {
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int read;
-        while((read = inputStream.read(buffer)) != -1) {
-            outputStream.write(buffer, 0, read);
-        }
-        return outputStream.toByteArray();
-    }
-
-    private static String extractJsonString(String json, String key) {
-        String needle = "\"" + key + "\"";
-        int keyIndex = json.indexOf(needle);
-        if(keyIndex < 0) return "";
-        int colonIndex = json.indexOf(':', keyIndex + needle.length());
-        if(colonIndex < 0) return "";
-        int startQuote = json.indexOf('"', colonIndex + 1);
-        if(startQuote < 0) return "";
-        int endQuote = json.indexOf('"', startQuote + 1);
-        if(endQuote < 0) return "";
-        return json.substring(startQuote + 1, endQuote);
-    }
-
-    private static void downloadIfMissing(String url, File destination) throws IOException {
-        if(destination.isFile() && destination.length() > 0) return;
-        File tempFile = new File(destination.getParentFile(), destination.getName() + ".tmp");
-        java.net.HttpURLConnection connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(30000);
-        connection.setRequestProperty("User-Agent", "OnyxLauncher/1.0");
-        try(InputStream inputStream = connection.getInputStream();
-            FileOutputStream outputStream = new FileOutputStream(tempFile)) {
-            byte[] buffer = new byte[8192];
-            int read;
-            while((read = inputStream.read(buffer)) != -1) {
-                outputStream.write(buffer, 0, read);
-            }
-        } finally {
-            connection.disconnect();
-        }
-        if(destination.exists() && !destination.delete()) {
-            throw new IOException("Could not replace " + destination.getName());
-        }
-        if(!tempFile.renameTo(destination)) {
-            throw new IOException("Could not move " + tempFile.getName() + " to " + destination.getName());
-        }
-        Log.i("JREUtils", "Downloaded " + destination.getName());
-    }
-
-    private static void deleteModJar(File file) {
-        if(file.getName().endsWith("-onyx.jar")) return;
-        if(file.delete()) {
-            Log.i("JREUtils", "Deleted incompatible mod jar " + file.getName());
-        } else {
-            Log.w("JREUtils", "Could not delete incompatible mod jar " + file.getName());
-        }
-    }
-
     public static void launchJavaVM(final AppCompatActivity activity, final Runtime runtime, File gameDirectory, final List<String> JVMArgs, final String userArgsString) throws Throwable {
-        launchJavaVM(activity, runtime, gameDirectory, JVMArgs, userArgsString, false);
-    }
-
-    public static void launchJavaVM(final AppCompatActivity activity, final Runtime runtime, File gameDirectory, final List<String> JVMArgs, final String userArgsString, boolean headlessTool) throws Throwable {
         String runtimeHome = MultiRTUtils.getRuntimeHome(runtime.name).getAbsolutePath();
-
-        if(!headlessTool) {
-            stabilizeIrisSodiumStack(gameDirectory);
-            stabilizeIrisShaderOptions(gameDirectory);
-            applyRendererCompatibilityPolicy(activity, gameDirectory);
-        }
 
         JREUtils.relocateLibPath(runtime, runtimeHome);
 
-        setJavaEnvironment(activity, runtimeHome, !headlessTool);
+        setJavaEnvironment(activity, runtimeHome);
 
-        final String graphicsLib = headlessTool ? null : loadGraphicsLibrary();
-        List<String> userArgs = getJavaArgs(activity, runtimeHome, userArgsString, !headlessTool);
+        final String graphicsLib = loadGraphicsLibrary();
+        List<String> userArgs = getJavaArgs(activity, runtimeHome, userArgsString);
 
         //Remove arguments that can interfere with the good working of the launcher
         purgeArg(userArgs,"-Xms");
@@ -678,32 +341,19 @@ public class JREUtils {
         purgeArg(userArgs, "-XX:ActiveProcessorCount");
 
         //Add automatically generated args
-        int initialHeapMb = MobileProfileOptimizer.recommendedInitialHeapMb(LauncherPreferences.PREF_RAM_ALLOCATION);
-        if(!headlessTool) {
-            userArgs.add("-Xms" + initialHeapMb + "M");
-            userArgs.add("-Xmx" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
-            if(LOCAL_RENDERER != null) userArgs.add("-Dorg.lwjgl.opengl.libname=" + graphicsLib);
+        userArgs.add("-Xms" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
+        userArgs.add("-Xmx" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
+        if(LOCAL_RENDERER != null) userArgs.add("-Dorg.lwjgl.opengl.libname=" + graphicsLib);
 
-            // Force LWJGL to use the Freetype library intended for it, instead of using the one
-            // that we ship with Java (since it may be older than what's needed)
-            userArgs.add("-Dorg.lwjgl.freetype.libname="+ NATIVE_LIB_DIR+"/libfreetype.so");
-        }
+        // Force LWJGL to use the Freetype library intended for it, instead of using the one
+        // that we ship with Java (since it may be older than what's needed)
+        userArgs.add("-Dorg.lwjgl.freetype.libname="+ NATIVE_LIB_DIR+"/libfreetype.so");
 
         // Some phones are not using the right number of cores, fix that
-        int activeProcessors = MobileProfileOptimizer.recommendedActiveProcessors(
-                java.lang.Runtime.getRuntime().availableProcessors(),
-                LauncherPreferences.PREF_RAM_ALLOCATION);
-        userArgs.add("-XX:ActiveProcessorCount=" + activeProcessors);
-        if(!headlessTool) {
-            Logger.appendToLog("Info: JVM mobile limits: Xms=" + initialHeapMb
-                    + "M Xmx=" + LauncherPreferences.PREF_RAM_ALLOCATION
-                    + "M ActiveProcessorCount=" + activeProcessors);
-        }
+        userArgs.add("-XX:ActiveProcessorCount=" + java.lang.Runtime.getRuntime().availableProcessors());
 
         userArgs.addAll(JVMArgs);
-        if(!headlessTool) {
-            activity.runOnUiThread(() -> Toast.makeText(activity, activity.getString(R.string.autoram_info_msg,LauncherPreferences.PREF_RAM_ALLOCATION), Toast.LENGTH_SHORT).show());
-        }
+        activity.runOnUiThread(() -> Toast.makeText(activity, activity.getString(R.string.autoram_info_msg,LauncherPreferences.PREF_RAM_ALLOCATION), Toast.LENGTH_SHORT).show());
         System.out.println(JVMArgs);
 
         initJavaRuntime(runtimeHome);
@@ -711,6 +361,29 @@ public class JREUtils {
         JREUtils.initializeHooks();
         chdir(gameDirectory == null ? Tools.DIR_GAME_NEW : gameDirectory.getAbsolutePath());
         userArgs.add(0,"java"); //argv[0] is the program name according to C standard.
+
+        // Clean up any Pojav / Onyx environment variables that might trigger Sodium's PojavLauncher block/crash.
+        try {
+            android.system.Os.unsetenv("POJAV_RENDERER");
+            android.system.Os.unsetenv("POJAV_NATIVEDIR");
+            android.system.Os.unsetenv("POJAV_VSYNC_IN_ZINK");
+            android.system.Os.unsetenv("POJAV_EMUI_ITERATOR_MITIGATE");
+            android.system.Os.unsetenv("POJAV_FFMPEG_PATH");
+            android.system.Os.unsetenv("POJAV_BIG_CORE_AFFINITY");
+            android.system.Os.unsetenv("POJAV_LOAD_TURNIP");
+            android.system.Os.unsetenv("POJAVEXEC_EGL");
+
+            android.system.Os.unsetenv("ONYX_RENDERER");
+            android.system.Os.unsetenv("ONYX_NATIVEDIR");
+            android.system.Os.unsetenv("ONYX_VSYNC_IN_ZINK");
+            android.system.Os.unsetenv("ONYX_EMUI_ITERATOR_MITIGATE");
+            android.system.Os.unsetenv("ONYX_FFMPEG_PATH");
+            android.system.Os.unsetenv("ONYX_BIG_CORE_AFFINITY");
+            android.system.Os.unsetenv("ONYX_LOAD_TURNIP");
+            android.system.Os.unsetenv("ONYXEXEC_EGL");
+        } catch (Exception e) {
+            Log.e("JREUtils", "Failed to unset environment variables", e);
+        }
 
         final int exitCode = VMLauncher.launchJVM(userArgs.toArray(new String[0]));
         Logger.appendToLog("Java Exit code: " + exitCode);
@@ -731,10 +404,6 @@ public class JREUtils {
      * @return A list filled with args.
      */
     public static List<String> getJavaArgs(Context ctx, String runtimeHome, String userArgumentsString) {
-        return getJavaArgs(ctx, runtimeHome, userArgumentsString, true);
-    }
-
-    public static List<String> getJavaArgs(Context ctx, String runtimeHome, String userArgumentsString, boolean includeGameArguments) {
         List<String> userArguments = parseJavaArguments(userArgumentsString);
         String resolvFile;
         resolvFile = new File(Tools.DIR_DATA,"resolv.conf").getAbsolutePath();
@@ -750,29 +419,26 @@ public class JREUtils {
                 "-Donyx.path.minecraft=" + Tools.DIR_GAME_NEW,
                 "-Donyx.path.private.account=" + Tools.DIR_ACCOUNT_NEW,
                 "-Duser.timezone=" + TimeZone.getDefault().getID(),
+
+                "-Dorg.lwjgl.vulkan.libname=libvulkan.so",
+                //LWJGL 3 DEBUG FLAGS
+                //"-Dorg.lwjgl.util.Debug=true",
+                //"-Dorg.lwjgl.util.DebugFunctions=true",
+                //"-Dorg.lwjgl.util.DebugLoader=true",
+                // GLFW Stub width height
+                "-Dglfwstub.windowWidth=" + Tools.getDisplayFriendlyRes(currentDisplayMetrics.widthPixels, LauncherPreferences.PREF_SCALE_FACTOR),
+                "-Dglfwstub.windowHeight=" + Tools.getDisplayFriendlyRes(currentDisplayMetrics.heightPixels, LauncherPreferences.PREF_SCALE_FACTOR),
+                "-Dglfwstub.initEgl=false",
                 "-Dext.net.resolvPath=" +resolvFile,
                 "-Dlog4j2.formatMsgNoLookups=true", //Log4j RCE mitigation
+                "-Dsodium.checks.issue2561=false",
+                "-Dsodium.mixins.features.render.frapi=false", // Disable incompatible Sodium FRAPI item render state mixin on MC 1.21.5+
+
+                "-Dnet.minecraft.clientmodname=" + Tools.APP_NAME,
+                "-Dfml.earlyprogresswindow=false", //Forge 1.14+ workaround
+                "-Dloader.disable_forked_guis=true",
                 "-Djdk.lang.Process.launchMechanism=FORK" // Default is POSIX_SPAWN which requires starting jspawnhelper, which doesn't work on Android
         ));
-        if(includeGameArguments) {
-            overridableArguments.addAll(Arrays.asList(
-                    "-Dorg.lwjgl.vulkan.libname=libvulkan.so",
-                    //LWJGL 3 DEBUG FLAGS
-                    //"-Dorg.lwjgl.util.Debug=true",
-                    //"-Dorg.lwjgl.util.DebugFunctions=true",
-                    //"-Dorg.lwjgl.util.DebugLoader=true",
-                    // GLFW Stub width height
-                    "-Dglfwstub.windowWidth=" + Tools.getDisplayFriendlyRes(currentDisplayMetrics.widthPixels, LauncherPreferences.PREF_SCALE_FACTOR),
-                    "-Dglfwstub.windowHeight=" + Tools.getDisplayFriendlyRes(currentDisplayMetrics.heightPixels, LauncherPreferences.PREF_SCALE_FACTOR),
-                    "-Dglfwstub.initEgl=false",
-                    "-Dsodium.checks.issue2561=false",
-                    "-Dsodium.mixins.features.render.frapi=false", // Disable incompatible Sodium FRAPI item render state mixin on MC 1.21.5+
-
-                    "-Dnet.minecraft.clientmodname=" + Tools.APP_NAME,
-                    "-Dfml.earlyprogresswindow=false", //Forge 1.14+ workaround
-                    "-Dloader.disable_forked_guis=true"
-            ));
-        }
         if(LauncherPreferences.PREF_ARC_CAPES) {
             overridableArguments.add("-javaagent:"+new File(Tools.DIR_DATA,"arc_dns_injector/arc_dns_injector.jar").getAbsolutePath()+"=23.95.137.176");
         }

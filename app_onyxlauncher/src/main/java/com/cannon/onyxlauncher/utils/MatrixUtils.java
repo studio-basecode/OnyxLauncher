@@ -144,7 +144,7 @@ public class MatrixUtils {
         destination.setValues(matrix);
     }
 
-    // Manual inverse for a 3x3 affine transform matrix.
+    // This was made by ChatGPT and i have no clue what's happening here, but it works so eh
     private static void inverseMatrix(float[] matrix) {
         float determinant = matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7])
                 - matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6])

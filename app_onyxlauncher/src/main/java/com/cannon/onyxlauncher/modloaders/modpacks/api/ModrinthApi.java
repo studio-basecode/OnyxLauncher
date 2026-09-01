@@ -215,7 +215,7 @@ public class ModrinthApi implements ModpackApi{
                     Tools.read(ZipUtils.getEntryStream(modpackZipFile, "modrinth.index.json")),
                     ModrinthIndex.class);
             
-            ModDownloader modDownloader = new ModDownloader(instanceDestination, false, 10);
+            ModDownloader modDownloader = new ModDownloader(instanceDestination);
             for(ModrinthIndex.ModrinthIndexFile indexFile : modrinthIndex.files) {
                 modDownloader.submitDownload(indexFile.fileSize, indexFile.path, indexFile.hashes.sha1, indexFile.downloads);
             }

@@ -4,7 +4,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 
 import com.cannon.onyxlauncher.utils.DownloadUtils;
-import com.cannon.onyxlauncher.modloaders.modpacks.api.ModpackUrlUtils;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -33,9 +32,7 @@ class DownloadImageTask implements Runnable {
     public boolean runCatching() {
         try {
             IconCacheJanitor.waitForJanitorToFinish();
-            String imageUrl = ModpackUrlUtils.normalizeUrl(mParentTask.imageUrl);
-            if(!ModpackUrlUtils.isHttpUrl(imageUrl)) return false;
-            DownloadUtils.downloadFile(imageUrl, mParentTask.cacheFile);
+            DownloadUtils.downloadFile(mParentTask.imageUrl, mParentTask.cacheFile);
             Bitmap bitmap = BitmapFactory.decodeFile(mParentTask.cacheFile.getAbsolutePath());
             if(bitmap == null) return false;
             int bitmapWidth = bitmap.getWidth(), bitmapHeight = bitmap.getHeight();

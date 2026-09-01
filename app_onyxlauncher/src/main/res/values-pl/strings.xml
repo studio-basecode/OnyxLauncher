@@ -296,7 +296,6 @@
     <string name="modpack_install_notification_title">Instalator paczek modów Onyx</string>
     <string name="modpack_install_notification_success">Kliknij tutaj, aby zakończyć instalację paczki modów</string>
     <string name="modpack_install_notification_data_not_available">Nie udało się pobrać informacji o ładowarce modyfikacji</string>
-    <string name="modpack_background_already_running">Pobieranie paczki modów już trwa</string>
     <string name="modpack_install_modloader_download_failed">Nie udało się pobrać plików ładowarki modyfikacji</string>
     <string name="modpack_install_download_failed">Nie udało się pobrać plików paczki modów</string>
     <string name="modpack_install_button">Stwórz profil paczki modów</string>
@@ -394,9 +393,6 @@
     <string name="button_create_instance">Utwórz Instalację</string>
     <string name="browse_and_download_modpacks">Przeglądaj i pobieraj paczki modów</string>
     <string name="search_modpack_placeholder">Wyszukaj paczkę modów...</string>
-    <string name="source_local_packs">Swoje paczki</string>
-    <string name="button_choose_local_modpack">Wybierz plik paczki</string>
-    <string name="status_preparing_local_modpack">Przygotowywanie lokalnej paczki...</string>
     <string name="search_technic_hint">Wpisz dokładny identyfikator paczki Technic i zatwierdź</string>
     <string name="search_no_results">Brak wyników wyszukiwania</string>
     <string name="failed_to_load_modpack_details">Nie udało się załadować szczegółów paczki.</string>
@@ -494,16 +490,6 @@
     <string name="search_language_placeholder">Szukaj języka…</string>
     <string name="settings_title">Ustawienia</string>
     <string name="ram_allocation_label">Alokacja RAM: %d MB</string>
-    <string name="play_stats_title">Statystyki gry</string>
-    <string name="play_stats_total">Łącznie grano</string>
-    <string name="play_stats_week">W tym tygodniu</string>
-    <string name="play_stats_longest">Najdłuższa sesja</string>
-    <string name="play_stats_last_session">Ostatnia sesja</string>
-    <string name="play_stats_sessions">Liczba sesji</string>
-    <string name="play_stats_average">Średnia sesja</string>
-    <string name="play_stats_last_played">Ostatnio grano</string>
-    <string name="play_stats_interrupted">Odzyskane crashe</string>
-    <string name="play_stats_never">Nigdy</string>
     <string name="toast_downloading_java_for_installer">Pobieranie Java %s dla instalatora…</string>
     <string name="required_dependency">Wymagana zależność</string>
     <string name="content_desc_settings">Ustawienia</string>
@@ -595,12 +581,4 @@
     <string name="bta_installer_untested_versions">Nieprzetestowane wersje BTA</string>
     <string name="bta_installer_nightly_versions">Wersje Nightly BTA</string>
     <string name="toast_not_available_demo">To nie jest dostępne w wersji demonstracyjnej</string>
-    <string name="button_save">Zapisz</string>
-    <string name="instance_customize_title">Dostosuj instalację</string>
-    <string name="instance_name_label">Nazwa</string>
-    <string name="instance_icon_builtin">Ikony wbudowane</string>
-    <string name="instance_icon_custom_photo">Własne zdjęcie</string>
-    <string name="instance_icon_saved">Zaktualizowano instalację</string>
-    <string name="instance_icon_load_failed">Nie udało się wczytać obrazu</string>
-    <string name="instance_icon_save_failed">Nie udało się zapisać ikony: %s</string>
 </resources>

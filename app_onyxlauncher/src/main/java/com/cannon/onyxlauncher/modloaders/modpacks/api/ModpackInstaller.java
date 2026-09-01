@@ -3,7 +3,6 @@ package com.cannon.onyxlauncher.modloaders.modpacks.api;
 import com.kdt.mcgui.ProgressLayout;
 
 import com.cannon.onyxlauncher.R;
-import com.cannon.onyxlauncher.MobileProfileOptimizer;
 import com.cannon.onyxlauncher.Tools;
 import com.cannon.onyxlauncher.modloaders.modpacks.imagecache.ModIconCache;
 import com.cannon.onyxlauncher.modloaders.modpacks.models.ModDetail;
@@ -22,13 +21,18 @@ import java.util.concurrent.Callable;
 public class ModpackInstaller {
 
     public static ModLoader installModpack(ModDetail modDetail, int selectedVersion, InstallFunction installFunction) throws IOException {
-        String versionUrl = ModpackUrlUtils.normalizeUrl(modDetail.versionUrls[selectedVersion]);
+        String versionUrl = modDetail.versionUrls[selectedVersion];
         String versionHash = modDetail.versionHashes[selectedVersion];
-        if(!ModpackUrlUtils.isHttpUrl(versionUrl)) {
-            throw new IOException("This modpack source did not provide a client download URL for the selected version");
-        }
         
-        String modpackName = uniqueModpackFileName(modDetail.title, modDetail.versionNames[selectedVersion], versionHash);
+        // Ensure unique modpackName/folder/profileId
+        String baseModpackName = safeModpackFileName(modDetail.title, modDetail.versionNames[selectedVersion], versionHash);
+        String modpackName = baseModpackName;
+        int count = 1;
+        while (new File(Tools.DIR_GAME_HOME, "custom_instances/" + modpackName).exists() ||
+               (LauncherProfiles.mainProfileJson.profiles != null && LauncherProfiles.mainProfileJson.profiles.containsKey(modpackName))) {
+            modpackName = baseModpackName + "_" + count;
+            count++;
+        }
 
         // Get the modpack file
         File modpackFile = new File(Tools.DIR_CACHE, modpackName + ".cf"); // Cache File
@@ -53,10 +57,6 @@ public class ModpackInstaller {
             return null;
         }
 
-        return createInstalledProfile(modDetail, selectedVersion, modLoaderInfo, modpackName);
-    }
-
-    public static ModLoader createInstalledProfile(ModDetail modDetail, int selectedVersion, ModLoader modLoaderInfo, String modpackName) throws IOException {
         // Ensure unique display name for the profile
         String baseDisplayName = modDetail.title;
         String displayName = baseDisplayName;
@@ -90,7 +90,6 @@ public class ModpackInstaller {
         profile.pojavRendererName = "vulkan_zink";
         profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + "Internal-21";
         profile.ramAllocation = Math.max(3072, Math.min(4096, LauncherPreferences.PREF_RAM_ALLOCATION + 1024));
-        MobileProfileOptimizer.apply(profile);
 
         LauncherProfiles.mainProfileJson.profiles.put(modpackName, profile);
         LauncherProfiles.write();
@@ -120,18 +119,6 @@ public class ModpackInstaller {
         cleanName = shortenUtf8(cleanName, maxBaseBytes).replaceAll("_+$", "");
         if (cleanName.isEmpty()) cleanName = "modpack";
         return cleanName + suffix;
-    }
-
-    public static String uniqueModpackFileName(String title, String versionName, String versionHash) {
-        String baseModpackName = safeModpackFileName(title, versionName, versionHash);
-        String modpackName = baseModpackName;
-        int count = 1;
-        while (new File(Tools.DIR_GAME_HOME, "custom_instances/" + modpackName).exists() ||
-                (LauncherProfiles.mainProfileJson.profiles != null && LauncherProfiles.mainProfileJson.profiles.containsKey(modpackName))) {
-            modpackName = baseModpackName + "_" + count;
-            count++;
-        }
-        return modpackName;
     }
 
     private static String shortenUtf8(String value, int maxBytes) {

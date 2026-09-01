@@ -38,9 +38,6 @@ public class ModLoader {
     public String getVersionId() {
         switch (modLoaderType) {
             case MOD_LOADER_FORGE:
-                if (usesLegacyForgeVersionId()) {
-                    return minecraftVersion + "-Forge" + modLoaderVersion;
-                }
                 return minecraftVersion+"-forge-"+modLoaderVersion;
             case MOD_LOADER_FABRIC:
                 return "fabric-loader-"+modLoaderVersion+"-"+minecraftVersion;
@@ -115,7 +112,6 @@ public class ModLoader {
         switch (modLoaderType) {
             case MOD_LOADER_FORGE:
             case MOD_LOADER_NEOFORGE:
-                if (isVersionJsonInstalled()) return false;
                 return true;
             case MOD_LOADER_FABRIC:
             case MOD_LOADER_QUILT:
@@ -126,17 +122,5 @@ public class ModLoader {
 
     private FabriclikeDownloadTask createFabriclikeTask(ModloaderDownloadListener modloaderDownloadListener, FabriclikeUtils utils) {
         return new FabriclikeDownloadTask(modloaderDownloadListener, utils, minecraftVersion, modLoaderVersion, false);
-    }
-
-    private boolean isVersionJsonInstalled() {
-        String versionId = getVersionId();
-        if (versionId == null || versionId.isEmpty()) return false;
-        File versionJson = new File(Tools.DIR_HOME_VERSION, versionId + "/" + versionId + ".json");
-        return versionJson.isFile() && versionJson.length() > 0;
-    }
-
-    private boolean usesLegacyForgeVersionId() {
-        return minecraftVersion != null &&
-                (minecraftVersion.startsWith("1.6.") || minecraftVersion.startsWith("1.7."));
     }
 }

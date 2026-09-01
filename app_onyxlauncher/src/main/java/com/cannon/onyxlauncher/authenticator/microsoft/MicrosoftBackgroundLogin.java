@@ -144,6 +144,7 @@ public class MicrosoftBackgroundLogin {
             JSONObject jo = new JSONObject(Tools.read(conn.getInputStream()));
             msRefreshToken = jo.getString("refresh_token");
             conn.disconnect();
+            Log.i("MicrosoftLogin","Acess Token = " + jo.getString("access_token"));
             return jo.getString("access_token");
             //acquireXBLToken(jo.getString("access_token"));
         }else{
@@ -210,6 +211,7 @@ public class MicrosoftBackgroundLogin {
             String uhs = jo.getJSONObject("DisplayClaims").getJSONArray("xui").getJSONObject(0).getString("uhs");
             String token = jo.getString("Token");
             conn.disconnect();
+            Log.i("MicrosoftLogin","Xbl Xsts = " + token + "; Uhs = " + uhs);
             return new String[]{uhs, token};
             //acquireMinecraftToken(uhs,jo.getString("Token"));
         }else if(conn.getResponseCode() == 401) {
@@ -245,6 +247,7 @@ public class MicrosoftBackgroundLogin {
             expiresAt = System.currentTimeMillis() + 86400000;
             JSONObject jo = new JSONObject(Tools.read(conn.getInputStream()));
             conn.disconnect();
+            Log.i("MicrosoftLogin","MC token: "+jo.getString("access_token"));
             mcToken = jo.getString("access_token");
             //checkMcProfile(jo.getString("access_token"));
             return jo.getString("access_token");

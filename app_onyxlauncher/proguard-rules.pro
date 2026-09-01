@@ -1,51 +1,35 @@
-# R8 rules for release, gplay, and obfuscated APK builds.
+# Add project specific ProGuard rules here.
+# By default, the flags in this file are appended to flags specified
+# in C:\tools\adt-bundle-windows-x86_64-20131030\sdk/tools/proguard/proguard-android.txt
+# You can edit the include path and order by changing the proguardFiles
+# directive in build.gradle.
+#
+# For more details, see
+#   http://developer.android.com/guide/developing/tools/proguard.html
 
--keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
--renamesourcefileattribute SourceFile
--keepattributes SourceFile,LineNumberTable
+# Add any project specific keep options here:
 
-# Keep Android preference screens loaded from XML and class names referenced by native code.
--keep class com.cannon.onyxlauncher.prefs.screens.** { *; }
--keep class com.cannon.onyxlauncher.MainActivity {
-    public static void openLink(java.lang.String);
-    public static void querySystemClipboard();
-    public static void putClipboardData(java.lang.String, java.lang.String);
-}
--keep class com.cannon.onyxlauncher.ExitActivity {
-    public static void showExitMessage(android.content.Context, int, boolean);
-}
--keep class com.cannon.onyxlauncher.AWTInputBridge { *; }
--keep class com.cannon.onyxlauncher.Logger { *; }
--keep class com.cannon.onyxlauncher.Logger$eventLogListener { *; }
--keep class com.cannon.onyxlauncher.CriticalNativeTest { *; }
--keep class com.cannon.onyxlauncher.utils.JREUtils { *; }
--keep class com.oracle.dalvik.VMLauncher { *; }
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
 
-# JVM bridge classes are resolved by native code and by the launched Java runtime.
+# We use Reflection on the builder to avoid creating too many objects
+ -keep class net.objecthunter.exp4j.ExpressionBuilder**
+ -keepclassmembers class net.objecthunter.exp4j.ExpressionBuilder** {
+    *;
+ }
+# Option screens
+ -keep class com.cannon.onyxlauncher.prefs.screens** {*;}
+
+# Onyx Launcher keep rules for JNI/JVM lifecycle and reflection
+-keep class com.cannon.onyxlauncher.** { *; }
 -keep class org.lwjgl.** { *; }
 -keep class net.java.openjdk.cacio.** { *; }
 -keep class com.github.caciocavallosilano.cacio.** { *; }
 -keep class git.artdeell.** { *; }
 
-# Keep native method names for JNI entry points.
--keepclasseswithmembernames class * {
-    native <methods>;
-}
-
-# Gson/json model fields must keep their serialized names.
--keepclassmembers class com.cannon.onyxlauncher.value.** { <fields>; }
--keepclassmembers class com.cannon.onyxlauncher.tasks.** { <fields>; }
--keepclassmembers class com.cannon.onyxlauncher.modloaders.** { <fields>; }
--keepclassmembers class com.cannon.onyxlauncher.customcontrols.** { <fields>; }
--keepclassmembers class com.cannon.onyxlauncher.multirt.** { <fields>; }
-
-# Third-party expression parser uses reflective builder access.
--keep class net.objecthunter.exp4j.ExpressionBuilder** { *; }
-
-# Keep enum helpers used by Kotlin/Java reflection and serialization paths.
--keepclassmembers enum * {
-    public static **[] values();
-    public static ** valueOf(java.lang.String);
-}
 
 
