@@ -1,151 +1,128 @@
-<h1 align="center">PojavLauncher</h1>
+# OnyxLauncher
 
-<img src="https://github.com/PojavLauncherTeam/PojavLauncher/blob/v3_openjdk/app_pojavlauncher/src/main/assets/pojavlauncher.png" align="left" width="130" height="150" alt="PojavLauncher logo">
+[![Platform](https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square)](#)
+[![Architecture](https://img.shields.io/badge/Architecture-ARM64%20%7C%20ARMv7-2196F3?style=flat-square)](#)
+[![License](https://img.shields.io/badge/License-LGPL--3.0-orange?style=flat-square)](LICENSE)
+[![Base](https://img.shields.io/badge/Base-PojavLauncher-64748B?style=flat-square)](https://github.com/PojavLauncherTeam/PojavLauncher)
 
-[![Android CI](https://github.com/PojavLauncherTeam/PojavLauncher/workflows/Android%20CI/badge.svg)](https://github.com/PojavLauncherTeam/PojavLauncher/actions)
-[![GitHub commit activity](https://img.shields.io/github/commit-activity/m/PojavLauncherTeam/PojavLauncher)](https://github.com/PojavLauncherTeam/PojavLauncher/actions)
-[![Crowdin](https://badges.crowdin.net/pojavlauncher/localized.svg)](https://crowdin.com/project/pojavlauncher)
-[![Discord](https://img.shields.io/discord/724163890803638273.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.com/invite/aenk3EUvER)
-[![Twitter Follow](https://img.shields.io/twitter/follow/plaunchteam?color=blue&style=flat-square)](https://twitter.com/PLaunchTeam)
+OnyxLauncher is an Android launcher for Minecraft: Java Edition, built on top of PojavLauncher and extended with a modern instance manager, modpack browsing, custom profile icons, mobile performance defaults, renderer controls, and mod/resource/shader workflows.
 
-*From [Boardwalk](https://github.com/zhuowei/Boardwalk)'s ashes here comes PojavLauncher!*
+The recommended way to play is through the official Google Play build:
 
-PojavLauncher is a launcher that allows you to play Minecraft: Java Edition on your Android and [iOS](https://github.com/PojavLauncherTeam/PojavLauncher_iOS) devices.
+[OnyxLauncher on Google Play](https://play.google.com/store/apps/details?id=com.cannon.onyxlauncher) | [Studio BaseCode](https://basecodestudio.pages.dev)
 
-For more details, check out our [wiki](https://pojavlauncher.app/)!
+---
 
-## Important Notes
+## Project Overview
 
-**PojavLauncher has been discontinued** and is no longer supported. Its successor is available [here](https://github.com/AngelAuraMC/Amethyst-Android).
+Running Minecraft: Java Edition on Android requires a launcher that can prepare Java runtimes, Minecraft assets, modloaders, renderer settings, game profiles, and storage paths for mobile hardware. OnyxLauncher keeps that workflow inside one Android app while preserving the PojavLauncher foundation that makes Java Edition playable on Android.
 
-## Table of Contents
+This repository contains the public source tree for the launcher. Private signing files, local build configuration, and private service credentials are intentionally not included.
 
-* [Introduction](#introduction)
-* [Getting PojavLauncher](#getting-pojavlauncher)
-* [Building](#building)
-    * [Quick Build (Recommended)](#quick-build-recommended)
-    * [Detailed Build](#detailed-build)
-* [Current Status](#current-status)
-* [Known Issues](#known-issues)
-* [FAQ](#faq)
-* [Contributing](#contributing)
-* [Support](#support)
-* [License](#license)
-* [Credits & Dependencies](#credits--dependencies)
-* [Roadmap](#roadmap)
+## Key Features
 
-## Introduction
+- Launch Minecraft: Java Edition on Android.
+- Microsoft account login and local offline profiles.
+- Instance management with custom names and icons.
+- Fabric, Quilt, Forge, and NeoForge profile support.
+- Modpack search and install flows for supported sources.
+- Local modpack import for Modrinth `.mrpack` and CurseForge export `.zip` files.
+- Mod, resource-pack, and shader-pack management.
+- Renderer and runtime settings tuned for mobile devices.
+- Playtime statistics and launcher-side session tracking.
 
-* PojavLauncher is a Minecraft: Java Edition launcher for Android and iOS based on [Boardwalk](https://github.com/zhuowei/Boardwalk)
-* This launcher can launch almost all available Minecraft versions ranging from rd-132211 to 1.21 snapshots (including Combat Test versions)
-* Modding via Forge and Fabric are also supported.
-* This repository contains source code for Android. For iOS/iPadOS, check out [PojavLauncher_iOS](https://github.com/PojavLauncherTeam/PojavLauncher_iOS).
+## Runtime And JRE
 
-## Getting PojavLauncher
+OnyxLauncher uses Android-ready Java runtimes tailored for Minecraft compatibility and mobile performance.
 
-You can get PojavLauncher via three methods:
+JRE release repository:
 
-1. **Releases:** Download the prebuilt app from our [stable releases](https://github.com/PojavLauncherTeam/PojavLauncher/releases) or [automatic builds](https://github.com/PojavLauncherTeam/PojavLauncher/actions).
-2. **Google Play:** Get it from Google Play by clicking on this badge: [![Google Play](https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png)](https://play.google.com/store/apps/details?id=net.kdt.pojavlaunch)
-3. **Build from Source:** Follow the [building instructions](#building) below.
+[studio-basecode/onyx-jre-releases](https://github.com/studio-basecode/onyx-jre-releases)
 
-## Building
+| Java Runtime | Typical Minecraft Range | Notes |
+| --- | --- | --- |
+| Java 8 | 1.7.10 - 1.16.5 | Legacy Minecraft and older Forge/Fabric packs. |
+| Java 17 | 1.17 - 1.20.4 | Modern Minecraft versions before Java 21 became standard. |
+| Java 21 | 1.20.5+ | Current Minecraft versions and newer modpacks. |
 
-### Quick Build (Recommended)
+## Modding Ecosystem
 
-The easiest way to build PojavLauncher is to use the pre-built JREs provided by our CI.
+| Loader | Status | Notes |
+| --- | --- | --- |
+| Fabric | Supported | Commonly used for performance and lightweight modpacks. |
+| Quilt | Supported | Fabric-like loader support where compatible. |
+| Forge | Supported | Compatibility depends on Minecraft and Forge installer behavior. |
+| NeoForge | Supported | Used by newer Forge-family modpacks. |
 
-1. Clone the repository: `git clone https://github.com/PojavLauncherTeam/PojavLauncher.git`
-2. Build the launcher: `./gradlew :app_pojavlauncher:assembleDebug` (Use `gradlew.bat` on Windows)
+Compatibility still depends on the Minecraft version, modloader version, Java runtime, renderer, GPU driver, and the mods included in a specific pack.
 
-The built APK will be located in `app_pojavlauncher/build/outputs/apk/debug/`.
+## Modpack Sources
 
-### Detailed Build
+OnyxLauncher includes browser and install flows for multiple modpack ecosystems.
 
-If you need more control over the build process, follow these steps:
+| Source | Search | Install | Notes |
+| --- | --- | --- | --- |
+| CurseForge | Supported | Supported | Requires the launcher build to provide access through an allowed service configuration. |
+| Modrinth | Supported | Supported | Used for mods and modpacks with public download metadata. |
+| Technic | Supported | Supported | Icon and metadata availability depends on the pack listing. |
+| ATLauncher | Supported | Supported | Pack availability depends on upstream metadata and mirrors. |
+| FTB Legacy | Supported | Supported | Legacy feed compatibility may vary by pack. |
+| Local files | File picker | Supported | Supports local `.mrpack` and CurseForge export `.zip` imports. |
 
-1. **Java Runtime Environment (JRE):** Download the `jre8-pojav` artifact from our [CI auto builds](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/actions).  This package contains pre-built JREs for all supported architectures.  If you need to build the JRE yourself, follow the instructions in the [android-openjdk-build-multiarch](https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch) repository.
+## Build From Source
 
-2. **LWJGL:** The build instructions for the custom LWJGL are available over the [LWJGL repository](https://github.com/PojavLauncherTeam/lwjgl3).
+Requirements:
 
-3. **Language List:** Because languages are auto-added by Crowdin, you need to run the language list generator before building. In the project directory, run:
-   * Linux/macOS:
-     ```bash
-     chmod +x scripts/languagelist_updater.sh
-     bash scripts/languagelist_updater.sh
-     ```
-   * Windows:
-     ```batch
-     scripts\languagelist_updater.bat
-     ```
+- Android Studio or Android SDK command-line tools.
+- JDK 17 for Android builds.
+- Android NDK version `25.2.9519653`.
+- A normal Android `local.properties` file pointing to your SDK installation.
 
-4. **Build GLFW stub:** `./gradlew :jre_lwjgl3glfw:build`
+Debug build:
 
-5. **Build the launcher:** `./gradlew :app_pojavlauncher:assembleDebug` (Replace `gradlew` with `gradlew.bat` on Windows).
+```bash
+./gradlew :app_onyxlauncher:assembleDebug
+```
 
-## Current Status
+The debug APK is generated under:
 
-* [x] OpenJDK 8 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] OpenJDK 17 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] OpenJDK 21 Mobile port: ARM32, ARM64, x86, x86_64
-* [x] Headless mod installer
-* [x] Mod installer with GUI
-* [x] OpenGL in OpenJDK environment
-* [x] OpenAL (works on most devices)
-* [x] Support for Minecraft 1.12.2 and below
-* [x] Support for Minecraft 1.13 and above
-* [x] Support for Minecraft 1.17 (22w13a) and above
-* [x] Game surface zooming
-* [x] New input pipe rewritten to native code
-* [x] Rewritten entire controls system
-* [ ] More to come!
+```text
+app_onyxlauncher/build/outputs/apk/debug/
+```
 
-## Known Issues
+Release signing is not configured in this public repository. Use your own private keystore and never commit signing files.
 
-See our [issue tracker](https://github.com/PojavLauncherTeam/PojavLauncher/issues) for a list of known issues and their current status.
+## Offline Accounts
 
-## FAQ
+Offline profiles can be created from the launcher account screen by choosing the local/offline account option and entering a player name.
 
-See our [wiki](https://pojavlauncherteam.github.io/) for more information.
+Offline mode is intended for local testing, development, and cases where online authentication is not required. The recommended and supported way to play Minecraft is with a legitimate Minecraft account and the official Google Play build linked above.
 
-## Contributing
+## Project Layout
 
-Contributions are welcome! We welcome any type of contribution, not only code. For example, you can help improve the [wiki](https://pojavlauncherteam.github.io/), contribute to the [translations](https://crowdin.com/project/pojavlauncher), or submit bug reports and feature requests.
-
-Any code change should be submitted as a pull request. The description should explain what the code does and give steps to execute it.
-
-## Support
-
-For support, please join our [Discord server](https://discord.com/invite/aenk3EUvER).
+| Path | Purpose |
+| --- | --- |
+| `app_onyxlauncher/` | Android application module. |
+| `arc_dns_injector/` | Runtime helper module. |
+| `cacio_compat/` | Desktop Java compatibility support. |
+| `forge_installer/` | Forge installer integration. |
+| `jre_engine/` | Java runtime helper module. |
+| `minecraft_compat_src/` | Minecraft compatibility sources. |
+| `cloudflare/` | Optional service-side helpers for private deployments. |
+| `scripts/` | Build and maintenance helper scripts. |
 
 ## License
 
-PojavLauncher is licensed under [GNU LGPLv3](https://github.com/PojavLauncherTeam/PojavLauncher/blob/v3_openjdk/LICENSE).
+OnyxLauncher is derived from PojavLauncher and is licensed under the GNU Lesser General Public License v3.0.
 
-## Credits & Dependencies
+See [LICENSE](LICENSE) for the full license text.
 
-* [Boardwalk](https://github.com/zhuowei/Boardwalk) (JVM Launcher): Unknown License/[Apache License 2.0](https://github.com/zhuowei/Boardwalk/blob/master/LICENSE) or GNU GPLv2.
-* Android Support Libraries: [Apache License 2.0](https://android.googlesource.com/platform/prebuilts/maven_repo/android/+/master/NOTICE.txt).
-* [GL4ES](https://github.com/PojavLauncherTeam/gl4es): [MIT License](https://github.com/ptitSeb/gl4es/blob/master/LICENSE).
-* [OpenJDK](https://github.com/PojavLauncherTeam/openjdk-multiarch-jdk8u): [GNU GPLv2 License](https://openjdk.java.net/legal/gplv2+ce.html).
-* [LWJGL3](https://github.com/PojavLauncherTeam/lwjgl3): [BSD-3 License](https://github.com/LWJGL/lwjgl3/blob/master/LICENSE.md).
-* [LWJGLX](https://github.com/PojavLauncherTeam/lwjglx) (LWJGL2 API compatibility layer for LWJGL3): unknown license.
-* [Mesa 3D Graphics Library](https://gitlab.freedesktop.org/mesa/mesa): [MIT License](https://docs.mesa3d.org/license.html).
-* [pro-grade](https://github.com/pro-grade/pro-grade) (Java sandboxing security manager): [Apache License 2.0](https://github.com/pro-grade/pro-grade/blob/master/LICENSE.txt).
-* [bhook](https://github.com/bytedance/bhook) (Used for exit code trapping): [MIT license](https://github.com/bytedance/bhook/blob/main/LICENSE).
-* [libepoxy](https://github.com/anholt/libepoxy): [MIT License](https://github.com/anholt/libepoxy/blob/master/COPYING).
-* [virglrenderer](https://github.com/PojavLauncherTeam/virglrenderer): [MIT License](https://gitlab.freedesktop.org/virgl/virglrenderer/-/blob/master/COPYING).
-* Thanks to [MCHeads](https://mc-heads.net) for providing Minecraft avatars.
+## Credits
 
-## Roadmap
+OnyxLauncher is maintained by Studio BaseCode.
 
-We are currently focusing on:
+This project uses PojavLauncher as its launcher foundation and preserves the LGPLv3 licensing model of the upstream project. Credit and thanks go to the PojavLauncher team and contributors for the original Android Minecraft: Java Edition launcher work.
 
-* Exploring new rendering technologies.
+PojavLauncher upstream:
 
-Future plans include:
-
-* Improving stability and performance.
-* Enhancing the mod installation experience.
-
-We welcome community feedback and suggestions for our roadmap.  Please feel free to open a feature request in our [issue tracker](https://github.com/PojavLauncherTeam/PojavLauncher/issues).
+[https://github.com/PojavLauncherTeam/PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher)
