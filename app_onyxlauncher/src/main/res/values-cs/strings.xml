@@ -588,4 +588,13 @@
     <string name="no_loader_for_version_err">Žádný nakladač pro verzi</string>
     <string name="status_starting_download">Spouštění stahování…</string>
     <string name="status_launching_forge_gui_installer">Spuštění grafického instalátoru Forge…</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">O aplikaci Onyx Launcher</string>
+    <string name="about_website_label">Webová stránka</string>
+    <string name="about_github_label">GitHub (zdrojový kód a hlášení chyb)</string>
+    <string name="about_bug_reports">Našli jste chybu? Nahlaste ji na GitHub Issues.</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">Otevřít odkaz</string>
+    <string name="about_content_desc_info">Informace o aplikaci</string>
 </resources>

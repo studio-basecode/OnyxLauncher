@@ -14,27 +14,58 @@ import org.apache.commons.io.*;
 
 @SuppressWarnings("IOStreamConstructor")
 public class DownloadUtils {
-    public static final String USER_AGENT = Tools.APP_NAME;
-    private static final int TIME_OUT = 10000;
+    public static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OnyxLauncher/1.0";
+    private static final int TIME_OUT = 15000;
+
+    public static URL normalizeUrl(String url) throws MalformedURLException {
+        if (url == null) throw new MalformedURLException("URL is null");
+        String trimmed = url.trim();
+        // Replace spaces with %20 if unencoded
+        if (trimmed.contains(" ")) {
+            trimmed = trimmed.replace(" ", "%20");
+        }
+        return new URL(trimmed);
+    }
 
     public static void download(String url, OutputStream os) throws IOException {
-        download(new URL(url), os);
+        download(normalizeUrl(url), os);
     }
 
     public static void download(URL url, OutputStream os) throws IOException {
         InputStream is = null;
+        HttpURLConnection conn = null;
         try {
-            // System.out.println("Connecting: " + url.toString());
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestProperty("User-Agent", USER_AGENT);
-            conn.setConnectTimeout(TIME_OUT);
-            conn.setReadTimeout(TIME_OUT);
-            conn.setDoInput(true);
-            conn.connect();
-            if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
-                throw new IOException("Server returned HTTP " + conn.getResponseCode()
-                        + ": " + conn.getResponseMessage());
+            URL currentUrl = url;
+            int redirects = 0;
+            while (redirects < 5) {
+                conn = (HttpURLConnection) currentUrl.openConnection();
+                conn.setRequestProperty("User-Agent", USER_AGENT);
+                conn.setConnectTimeout(TIME_OUT);
+                conn.setReadTimeout(TIME_OUT);
+                conn.setInstanceFollowRedirects(true);
+                conn.setDoInput(true);
+                conn.connect();
+
+                int responseCode = conn.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_MOVED_PERM
+                        || responseCode == HttpURLConnection.HTTP_MOVED_TEMP
+                        || responseCode == HttpURLConnection.HTTP_SEE_OTHER
+                        || responseCode == 307 || responseCode == 308) {
+                    String newUrl = conn.getHeaderField("Location");
+                    if (newUrl != null && !newUrl.isEmpty()) {
+                        currentUrl = normalizeUrl(newUrl);
+                        conn.disconnect();
+                        redirects++;
+                        continue;
+                    }
+                }
+
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new IOException("Server returned HTTP " + responseCode + ": " + conn.getResponseMessage());
+                }
+                break;
             }
+
             is = conn.getInputStream();
             IOUtils.copy(is, os);
         } catch (IOException e) {
@@ -46,6 +77,11 @@ public class DownloadUtils {
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
+            }
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored) {}
             }
         }
     }
@@ -68,25 +104,69 @@ public class DownloadUtils {
                                              Tools.DownloaderFeedback monitor) throws IOException {
         FileUtils.ensureParentDirectory(outputFile);
 
-        HttpURLConnection conn = (HttpURLConnection) new URL(urlInput).openConnection();
-        conn.setConnectTimeout(TIME_OUT);
-        conn.setReadTimeout(TIME_OUT);
-        InputStream readStr = conn.getInputStream();
-        try (FileOutputStream fos = new FileOutputStream(outputFile)) {
-            int current;
-            int overall = 0;
-            int length = conn.getContentLength();
+        URL currentUrl = normalizeUrl(urlInput);
+        HttpURLConnection conn = null;
+        InputStream readStr = null;
+        try {
+            int redirects = 0;
+            while (redirects < 5) {
+                conn = (HttpURLConnection) currentUrl.openConnection();
+                conn.setRequestProperty("User-Agent", USER_AGENT);
+                conn.setConnectTimeout(TIME_OUT);
+                conn.setReadTimeout(TIME_OUT);
+                conn.setInstanceFollowRedirects(true);
+                conn.setDoInput(true);
+                conn.connect();
 
-            if (buffer == null) buffer = new byte[65535];
+                int responseCode = conn.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_MOVED_PERM
+                        || responseCode == HttpURLConnection.HTTP_MOVED_TEMP
+                        || responseCode == HttpURLConnection.HTTP_SEE_OTHER
+                        || responseCode == 307 || responseCode == 308) {
+                    String newUrl = conn.getHeaderField("Location");
+                    if (newUrl != null && !newUrl.isEmpty()) {
+                        currentUrl = normalizeUrl(newUrl);
+                        conn.disconnect();
+                        redirects++;
+                        continue;
+                    }
+                }
 
-            while ((current = readStr.read(buffer)) != -1) {
-                overall += current;
-                fos.write(buffer, 0, current);
-                monitor.updateProgress(overall, length);
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new IOException("Server returned HTTP " + responseCode + ": " + conn.getResponseMessage());
+                }
+                break;
             }
-            conn.disconnect();
+
+            readStr = conn.getInputStream();
+            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+                int current;
+                int overall = 0;
+                int length = conn.getContentLength();
+
+                if (buffer == null) buffer = new byte[65535];
+
+                while ((current = readStr.read(buffer)) != -1) {
+                    overall += current;
+                    fos.write(buffer, 0, current);
+                    if (monitor != null) {
+                        monitor.updateProgress(overall, length);
+                    }
+                }
+            }
         } catch (IOException e) {
             throw new IOException("Unable to download from " + urlInput, e);
+        } finally {
+            if (readStr != null) {
+                try {
+                    readStr.close();
+                } catch (Exception ignored) {}
+            }
+            if (conn != null) {
+                try {
+                    conn.disconnect();
+                } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -130,9 +210,12 @@ public class DownloadUtils {
             return downloadFunction.call();
         } catch (IOException e){
             throw e;
-        }
-        catch (Exception e) {
-            throw new RuntimeException(e);
+        } catch (InterruptedException e) {
+            InterruptedIOException iioe = new InterruptedIOException("Download interrupted");
+            iioe.initCause(e);
+            throw iioe;
+        } catch (Exception e) {
+            throw new IOException(e);
         }
     }
 
@@ -141,8 +224,8 @@ public class DownloadUtils {
     }
 
     public static <T> T ensureSha1(File outputFile, @Nullable String sha1, Callable<T> downloadFunction) throws IOException {
-        // Skip if needed
-        if(sha1 == null) {
+        // Skip if needed (treat null or empty/blank sha1 as unverified)
+        if(sha1 == null || sha1.trim().isEmpty()) {
             // If the file exists and we don't know it's SHA1, don't try to redownload it.
             if(outputFile.exists()) return null;
             else return downloadFile(downloadFunction);
@@ -156,7 +239,7 @@ public class DownloadUtils {
             downloadFile(downloadFunction);
             fileOkay = verifyFile(outputFile, sha1);
         }
-        if(!fileOkay) throw new SHA1VerificationException("SHA1 verifcation failed after 5 download attempts");
+        if(!fileOkay) throw new SHA1VerificationException("SHA1 verification failed after 5 download attempts for " + outputFile.getName());
         return result;
     }
 

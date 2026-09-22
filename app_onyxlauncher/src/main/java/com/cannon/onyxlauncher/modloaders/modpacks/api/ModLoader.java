@@ -82,18 +82,31 @@ public class ModLoader {
      */
     public Intent getInstallationIntent(Context context, File modInstallerJar) {
         Intent baseIntent = new Intent(context, JavaGUILauncherActivity.class);
+        int targetMcJava = 8;
+        try {
+            if (Tools.getVersionInfo(minecraftVersion) != null && Tools.getVersionInfo(minecraftVersion).javaVersion != null) {
+                targetMcJava = Tools.getVersionInfo(minecraftVersion).javaVersion.majorVersion;
+            } else if (minecraftVersion.startsWith("1.20.5") || minecraftVersion.startsWith("1.20.6") || minecraftVersion.startsWith("1.21")) {
+                targetMcJava = 21;
+            } else if (minecraftVersion.startsWith("1.18") || minecraftVersion.startsWith("1.19") || minecraftVersion.startsWith("1.20")) {
+                targetMcJava = 17;
+            }
+        } catch (Exception e) {
+            if (minecraftVersion.startsWith("1.18") || minecraftVersion.startsWith("1.19") || minecraftVersion.startsWith("1.20") || minecraftVersion.startsWith("1.21")) {
+                targetMcJava = 17;
+            }
+        }
+        baseIntent.putExtra("targetJavaVersion", targetMcJava);
+
         switch (modLoaderType) {
             case MOD_LOADER_FORGE:
-                ForgeUtils.addAutoInstallArgs(baseIntent, modInstallerJar, getVersionId());
+                if (targetMcJava >= 17) {
+                    ForgeUtils.addCliInstallArgs(baseIntent, modInstallerJar, Tools.DIR_GAME_NEW);
+                } else {
+                    ForgeUtils.addAutoInstallArgs(baseIntent, modInstallerJar, getVersionId());
+                }
                 return baseIntent;
             case MOD_LOADER_NEOFORGE: {
-                int targetMcJava = 17;
-                try {
-                    targetMcJava = Tools.getVersionInfo(minecraftVersion).javaVersion.majorVersion;
-                } catch (Exception e) {
-                    // Ignore, fallback to 17
-                }
-                baseIntent.putExtra("targetJavaVersion", targetMcJava);
                 ForgeUtils.addCliInstallArgs(baseIntent, modInstallerJar, Tools.DIR_GAME_NEW);
                 return baseIntent;
             }

@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -259,14 +260,33 @@ fun getNeoForgeBaseVersion(neoforgeVersion: String): String {
     return ""
 }
 
+fun extractBaseMinecraftVersion(version: String?): String {
+    if (version.isNullOrBlank()) return "1.20.1"
+    if (version.contains("-forge-")) {
+        return version.substringBefore("-forge-")
+    }
+    if (version.contains("-neoforge-")) {
+        return version.substringBefore("-neoforge-")
+    }
+    if (version.startsWith("fabric-loader-") || version.startsWith("quilt-loader-")) {
+        return version.substringAfterLast("-")
+    }
+    if (version.startsWith("neoforge-")) {
+        val mapped = getNeoForgeBaseVersion(version)
+        if (mapped.isNotEmpty()) return mapped
+    }
+    return version
+}
+
 fun isLaunchVersionForBase(launchVersion: String?, baseVersion: String): Boolean {
     if (launchVersion.isNullOrBlank()) return false
-    if (launchVersion == baseVersion || launchVersion.endsWith("-$baseVersion")) return true
-    if (launchVersion.startsWith("$baseVersion-forge-")) return true
-    if (launchVersion.startsWith("$baseVersion-neoforge-")) return true
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    if (launchVersion == cleanBase || launchVersion.endsWith("-$cleanBase")) return true
+    if (launchVersion.startsWith("$cleanBase-forge-")) return true
+    if (launchVersion.startsWith("$cleanBase-neoforge-")) return true
     if (launchVersion.startsWith("neoforge-")) {
         val mappedBase = getNeoForgeBaseVersion(launchVersion)
-        return mappedBase == baseVersion
+        return mappedBase == cleanBase
     }
     return false
 }
@@ -1087,7 +1107,11 @@ fun MainApp(startScreen: String) {
     }
     
     BackHandler(enabled = currentScreen != "Home") { 
-        currentScreen = if (currentScreen == "InstanceSettings") "InstanceDetails" else "Home" 
+        currentScreen = when (currentScreen) {
+            "InstanceSettings" -> "InstanceDetails"
+            "About" -> "Home"
+            else -> "Home"
+        }
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = BgDark) {
@@ -1098,7 +1122,11 @@ fun MainApp(startScreen: String) {
                 onAccountClick = { showAccountDialog = true }, 
                 onSettingsClick = { currentScreen = "Settings" }, 
                 onBackClick = if (currentScreen != "Home") { { 
-                    currentScreen = if (currentScreen == "InstanceSettings") "InstanceDetails" else "Home" 
+                    currentScreen = when (currentScreen) {
+                        "InstanceSettings" -> "InstanceDetails"
+                        "About" -> "Home"
+                        else -> "Home"
+                    }
                 } } else null
             )
             
@@ -1110,8 +1138,10 @@ fun MainApp(startScreen: String) {
                         instances = myInstances, 
                         onAddClick = { currentScreen = "AddInstance" }, 
                         onInstanceClick = { activeInstance = it; currentScreen = "InstanceDetails" },
-                        currentScreen = currentScreen
+                        currentScreen = currentScreen,
+                        onAboutClick = { currentScreen = "About" }
                     )
+                    "About" -> AboutScreen(onBack = { currentScreen = "Home" })
                     "AddInstance" -> AddInstanceScreen(
                         versions = mojangVersions, 
                         onCreate = { name, versionId ->
@@ -1123,7 +1153,8 @@ fun MainApp(startScreen: String) {
                         },
                         onModpackInstalled = { title, versionId, profileId ->
                             val uniqueName = getUniqueInstanceName(title, myInstances)
-                            val newInstance = InstanceData(profileId, uniqueName, versionId)
+                            val baseMc = extractBaseMinecraftVersion(versionId)
+                            val newInstance = InstanceData(profileId, uniqueName, baseMc)
                             myInstances = myInstances + newInstance
                             saveInstances(sharedPrefs, myInstances) 
                             currentScreen = "Home"
@@ -1260,8 +1291,168 @@ fun PlayerHead(username: String, isPremium: Boolean, modifier: Modifier = Modifi
 }
 
 @Composable
-fun HomeScreen(instances: List<InstanceData>, onAddClick: () -> Unit, onInstanceClick: (InstanceData) -> Unit, currentScreen: String) {
-    Column(modifier = Modifier.fillMaxSize()) {
+fun AboutCard(
+    title: String,
+    subtitle: String,
+    url: String,
+    iconRes: Int,
+    iconBgColor: Color,
+    iconTint: Color? = null,
+    badgeText: String? = null
+) {
+    val context = LocalContext.current
+    Surface(
+        color = CardBg,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, StrokeColor),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                context.startActivity(intent)
+            }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Square Icon Container on the left
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .background(iconBgColor, RoundedCornerShape(14.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (iconTint != null) {
+                    Icon(
+                        painter = painterResource(id = iconRes),
+                        contentDescription = null,
+                        tint = iconTint,
+                        modifier = Modifier.size(32.dp)
+                    )
+                } else {
+                    Icon(
+                        painter = painterResource(id = iconRes),
+                        contentDescription = null,
+                        tint = Color.Unspecified,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            // Text Info
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (badgeText != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = badgeText,
+                        color = AccentColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Right Action Arrow
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = AccentColor.copy(alpha = 0.12f),
+                border = BorderStroke(1.dp, AccentColor.copy(alpha = 0.3f)),
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.ArrowForward,
+                        contentDescription = null,
+                        tint = AccentColor,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AboutScreen(onBack: () -> Unit) {
+    val websiteUrl = stringResource(R.string.about_website_url)
+    val githubUrl = stringResource(R.string.about_github_url)
+    val playUrl = stringResource(R.string.about_play_store_url)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+    ) {
+        Text(
+            text = stringResource(R.string.about_title),
+            color = TextPrimary,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // 1. Website Card
+        AboutCard(
+            title = stringResource(R.string.about_website_label),
+            subtitle = websiteUrl,
+            url = websiteUrl,
+            iconRes = R.drawable.ic_website,
+            iconBgColor = AccentColor.copy(alpha = 0.15f),
+            iconTint = AccentColor
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 2. GitHub Card
+        AboutCard(
+            title = "GitHub",
+            subtitle = stringResource(R.string.about_bug_reports),
+            url = githubUrl,
+            iconRes = R.drawable.ic_github,
+            iconBgColor = Color(0xFF24292E),
+            iconTint = Color.White,
+            badgeText = githubUrl
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 3. Play Store Card
+        AboutCard(
+            title = stringResource(R.string.about_play_store_label),
+            subtitle = playUrl,
+            url = playUrl,
+            iconRes = R.drawable.ic_playstore,
+            iconBgColor = Color(0xFF00C1A6).copy(alpha = 0.15f),
+            iconTint = null
+        )
+    }
+}
+
+@Composable
+fun HomeScreen(instances: List<InstanceData>, onAddClick: () -> Unit, onInstanceClick: (InstanceData) -> Unit, currentScreen: String, onAboutClick: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(), 
             horizontalArrangement = Arrangement.SpaceBetween, 
@@ -1282,7 +1473,9 @@ fun HomeScreen(instances: List<InstanceData>, onAddClick: () -> Unit, onInstance
         LazyVerticalGrid(
             columns = GridCells.Fixed(2), 
             horizontalArrangement = Arrangement.spacedBy(12.dp), 
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 76.dp),
+            modifier = Modifier.fillMaxSize()
         ) {
             items(instances) { ins ->
                 Surface(
@@ -1346,7 +1539,27 @@ fun HomeScreen(instances: List<InstanceData>, onAddClick: () -> Unit, onInstance
                 }
             }
         }
-    }
+        } // end inner Column
+
+        // Floating "?" info button — bottom right corner
+        FloatingActionButton(
+            onClick = onAboutClick,
+            containerColor = AccentColor,
+            contentColor = Color.White,
+            shape = androidx.compose.foundation.shape.CircleShape,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(16.dp)
+                .size(52.dp)
+        ) {
+            Text(
+                text = "?",
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+        }
+    } // end outer Box
 }
 
 @Composable
@@ -1493,10 +1706,16 @@ fun ModpacksBrowserLayout(onModpackInstalled: (String, String, String) -> Unit) 
         Constants.SOURCE_MODRINTH to "Modrinth",
         Constants.SOURCE_TECHNIC to "Technic",
         Constants.SOURCE_ATLAUNCHER to "ATLauncher",
-        Constants.SOURCE_FTB_LEGACY to "FTB Legacy"
+        Constants.SOURCE_FTB_LEGACY to "FTB Legacy",
+        Constants.SOURCE_CUSTOM to stringResource(R.string.source_custom)
     )
 
     LaunchedEffect(searchQuery, selectedSource) {
+        if (selectedSource == Constants.SOURCE_CUSTOM) {
+            isSearching = false
+            modpacksList = emptyList()
+            return@LaunchedEffect
+        }
         isSearching = true
         withContext(Dispatchers.IO) {
             try {
@@ -1526,19 +1745,17 @@ fun ModpacksBrowserLayout(onModpackInstalled: (String, String, String) -> Unit) 
         Text(text = stringResource(R.string.browse_and_download_modpacks), color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(8.dp))
         
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { searchQuery = it },
-            placeholder = { Text(
-                if (selectedSource == Constants.SOURCE_TECHNIC) "Wpisz slug paczki (np. attack-of-the-bteam)"
-                else stringResource(R.string.search_modpack_placeholder)
-            ) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary)
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
+        if (selectedSource != Constants.SOURCE_CUSTOM) {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text(stringResource(R.string.search_modpack_placeholder)) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
         
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1567,15 +1784,19 @@ fun ModpacksBrowserLayout(onModpackInstalled: (String, String, String) -> Unit) 
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        if (isSearching) {
+        if (selectedSource == Constants.SOURCE_CUSTOM) {
+            CustomModpackLayout(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                onModpackInstalled = onModpackInstalled
+            )
+        } else if (isSearching) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = AccentColor)
             }
         } else if (modpacksList.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = if (selectedSource == Constants.SOURCE_TECHNIC) stringResource(R.string.search_technic_hint)
-                           else stringResource(R.string.search_no_results),
+                    text = stringResource(R.string.search_no_results),
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -1624,6 +1845,336 @@ fun ModpacksBrowserLayout(onModpackInstalled: (String, String, String) -> Unit) 
                 onModpackInstalled(name, versionId, profileId)
             }
         )
+    }
+}
+
+suspend fun completeModLoaderInstallation(
+    context: Context,
+    modLoader: com.cannon.onyxlauncher.modloaders.modpacks.api.ModLoader,
+    setStatusText: suspend (String) -> Unit
+) {
+    if (modLoader.requiresGuiInstallation()) {
+        setStatusText(context.getString(R.string.status_downloading_forge_installer))
+        var forgeInstalled = false
+        var forgeError: Exception? = null
+        val forgeListener = object : com.cannon.onyxlauncher.modloaders.ModloaderDownloadListener {
+            override fun onDownloadFinished(downloadedFile: File?) {
+                forgeInstalled = true
+            }
+            override fun onDataNotAvailable() {
+                forgeError = IOException(context.getString(R.string.no_forge_installer_for_version))
+            }
+            override fun onDownloadError(e: Exception) {
+                forgeError = e
+            }
+        }
+        modLoader.getDownloadTask(forgeListener).run()
+        if (forgeError != null) throw forgeError!!
+
+        setStatusText(context.getString(R.string.status_launching_forge_gui_installer))
+        val forgeInstallFile = File(Tools.DIR_CACHE, "forge-" + modLoader.getVersionId() + "-installer.jar")
+        val installerJar = File(Tools.DIR_CACHE, "forge-installer.jar")
+        val intent = modLoader.getInstallationIntent(context, forgeInstallFile.takeIf { it.exists() } ?: installerJar)
+        if (intent != null) {
+            context.startActivity(intent)
+        }
+    } else {
+        setStatusText(context.getString(R.string.status_downloading_fabric_quilt_loader))
+        var loaderInstalled = false
+        var loaderError: Exception? = null
+        val loaderListener = object : com.cannon.onyxlauncher.modloaders.ModloaderDownloadListener {
+            override fun onDownloadFinished(downloadedFile: File?) {
+                loaderInstalled = true
+            }
+            override fun onDataNotAvailable() {
+                loaderError = IOException(context.getString(R.string.no_loader_for_version_err))
+            }
+            override fun onDownloadError(e: Exception) {
+                loaderError = e
+            }
+        }
+        modLoader.getDownloadTask(loaderListener).run()
+        if (loaderError != null) throw loaderError!!
+    }
+}
+
+data class CustomPackInfo(
+    val type: String,
+    val displayName: String,
+    val mcVersion: String,
+    val loaderName: String,
+    val fileCount: Int,
+    val tempFile: File
+)
+
+@Composable
+fun CustomModpackLayout(
+    modifier: Modifier = Modifier,
+    onModpackInstalled: (String, String, String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isAnalyzing by remember { mutableStateOf(false) }
+    var analyzedPack by remember { mutableStateOf<CustomPackInfo?>(null) }
+    var customInstanceName by remember { mutableStateOf("") }
+    var installProgress by remember { mutableStateOf<Float?>(null) }
+    var installStatusText by remember { mutableStateOf("") }
+
+    val packPickerLauncher = rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            scope.launch(Dispatchers.IO) {
+                withContext(Dispatchers.Main) {
+                    isAnalyzing = true
+                }
+                try {
+                    val origName = Tools.getFileName(context, uri) ?: "custom_pack.zip"
+                    val cleanName = cleanModName(origName)
+                    val tempFile = File(context.cacheDir, "imported_modpack_${System.currentTimeMillis()}.zip")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+
+                    var packInfo: CustomPackInfo? = null
+                    java.util.zip.ZipFile(tempFile).use { zip ->
+                        val curseEntry = zip.getEntry("manifest.json")
+                        val modrinthEntry = zip.getEntry("modrinth.index.json")
+                        if (curseEntry != null) {
+                            val manifestText = zip.getInputStream(curseEntry).bufferedReader().use { it.readText() }
+                            val manifest = Tools.GLOBAL_GSON.fromJson(manifestText, com.cannon.onyxlauncher.modloaders.modpacks.models.CurseManifest::class.java)
+                            val mcVer = manifest.minecraft?.version ?: "Unknown"
+                            val primaryLoader = manifest.minecraft?.modLoaders?.firstOrNull()?.id ?: "Forge"
+                            val count = manifest.files?.size ?: 0
+                            packInfo = CustomPackInfo(
+                                type = "curseforge",
+                                displayName = manifest.name?.ifEmpty { cleanName } ?: cleanName,
+                                mcVersion = mcVer,
+                                loaderName = primaryLoader,
+                                fileCount = count,
+                                tempFile = tempFile
+                            )
+                        } else if (modrinthEntry != null) {
+                            val indexText = zip.getInputStream(modrinthEntry).bufferedReader().use { it.readText() }
+                            val index = Tools.GLOBAL_GSON.fromJson(indexText, com.cannon.onyxlauncher.modloaders.modpacks.models.ModrinthIndex::class.java)
+                            val mcVer = index.dependencies?.get("minecraft") ?: "Unknown"
+                            val loader = index.dependencies?.keys?.firstOrNull { it != "minecraft" } ?: "Fabric"
+                            val count = index.files?.size ?: 0
+                            packInfo = CustomPackInfo(
+                                type = "modrinth",
+                                displayName = index.name?.ifEmpty { cleanName } ?: cleanName,
+                                mcVersion = mcVer,
+                                loaderName = loader,
+                                fileCount = count,
+                                tempFile = tempFile
+                            )
+                        } else {
+                            val jarEntries = zip.entries().asSequence().filter { it.name.endsWith(".jar", ignoreCase = true) }.toList()
+                            packInfo = CustomPackInfo(
+                                type = "generic",
+                                displayName = cleanName,
+                                mcVersion = "1.20.1",
+                                loaderName = "Custom ZIP",
+                                fileCount = jarEntries.size,
+                                tempFile = tempFile
+                            )
+                        }
+                    }
+                    withContext(Dispatchers.Main) {
+                        analyzedPack = packInfo
+                        customInstanceName = packInfo?.displayName ?: cleanName
+                    }
+                } catch (e: Exception) {
+                    Log.e("OnyxLauncher", "Error analyzing custom modpack", e)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, "Błąd analizy: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                } finally {
+                    withContext(Dispatchers.Main) {
+                        isAnalyzing = false
+                    }
+                }
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, StrokeColor)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = stringResource(R.string.custom_modpack_title),
+                color = TextPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.custom_modpack_desc),
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Button(
+                onClick = { packPickerLauncher.launch("*/*") },
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AccentColor)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = stringResource(R.string.button_choose_pack_file), fontWeight = FontWeight.Bold)
+            }
+
+            if (isAnalyzing) {
+                Spacer(modifier = Modifier.height(24.dp))
+                CircularProgressIndicator(color = AccentColor)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = "Analizowanie pliku paczki...", color = TextSecondary, fontSize = 12.sp)
+            } else if (analyzedPack != null) {
+                val pack = analyzedPack!!
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = StrokeColor)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(BgDark)
+                        .padding(12.dp)
+                ) {
+                    Text(text = "Format: ${pack.type.uppercase(Locale.ROOT)}", color = AccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = "Minecraft: ${pack.mcVersion}", color = TextPrimary, fontSize = 13.sp)
+                    Text(text = "Silnik: ${pack.loaderName}", color = TextPrimary, fontSize = 13.sp)
+                    Text(text = "Plików w paczce: ${pack.fileCount}", color = TextSecondary, fontSize = 12.sp)
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = customInstanceName,
+                    onValueChange = { customInstanceName = it },
+                    label = { Text("Nazwa nowej instancji") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                if (installProgress != null) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        LinearProgressIndicator(progress = installProgress!!, color = AccentColor, modifier = Modifier.fillMaxWidth())
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(text = installStatusText, color = TextSecondary, fontSize = 12.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            scope.launch(Dispatchers.IO) {
+                                try {
+                                    withContext(Dispatchers.Main) {
+                                        installProgress = 0.05f
+                                        installStatusText = context.getString(R.string.status_starting_download)
+                                    }
+
+                                    val rawName = customInstanceName.ifBlank { pack.displayName }
+                                    var cleanDirName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                                    var finalDirName = cleanDirName
+                                    var count = 1
+                                    while (File(Tools.DIR_GAME_HOME, "custom_instances/$finalDirName").exists()) {
+                                        finalDirName = "${cleanDirName}_$count"
+                                        count++
+                                    }
+                                    val targetDir = File(Tools.DIR_GAME_HOME, "custom_instances/$finalDirName")
+                                    targetDir.mkdirs()
+
+                                    val progressListener = object : com.cannon.onyxlauncher.progresskeeper.ProgressListener {
+                                        override fun onProgressStarted() {}
+                                        override fun onProgressUpdated(progress: Int, resid: Int, vararg varArg: Any?) {
+                                            scope.launch(Dispatchers.Main) {
+                                                installProgress = progress / 100f
+                                                installStatusText = try { context.getString(resid, *varArg) } catch (e: Exception) { context.getString(R.string.status_installing) }
+                                            }
+                                        }
+                                        override fun onProgressEnded() {}
+                                    }
+                                    com.cannon.onyxlauncher.progresskeeper.ProgressKeeper.addListener(ProgressLayout.INSTALL_MODPACK, progressListener)
+
+                                    var modLoader: com.cannon.onyxlauncher.modloaders.modpacks.api.ModLoader? = null
+                                    if (pack.type == "curseforge") {
+                                        val api = CurseforgeApi(context.getString(R.string.curseforge_api_key))
+                                        modLoader = api.installCurseforgeZip(pack.tempFile, targetDir)
+                                    } else if (pack.type == "modrinth") {
+                                        val api = ModrinthApi()
+                                        modLoader = api.installMrpack(pack.tempFile, targetDir)
+                                    } else {
+                                        com.cannon.onyxlauncher.utils.ZipUtils.zipExtract(java.util.zip.ZipFile(pack.tempFile), "", targetDir)
+                                        modLoader = com.cannon.onyxlauncher.modloaders.modpacks.api.ModLoader(
+                                            com.cannon.onyxlauncher.modloaders.modpacks.api.ModLoader.MOD_LOADER_FABRIC,
+                                            "recommended",
+                                            "1.20.1"
+                                        )
+                                    }
+
+                                    com.cannon.onyxlauncher.progresskeeper.ProgressKeeper.removeListener(ProgressLayout.INSTALL_MODPACK, progressListener)
+
+                                    if (modLoader != null) {
+                                        modLoader.profileId = finalDirName
+                                        modLoader.displayName = rawName
+
+                                        com.cannon.onyxlauncher.value.launcherprofiles.LauncherProfiles.load()
+                                        val profile = com.cannon.onyxlauncher.value.launcherprofiles.MinecraftProfile()
+                                        profile.gameDir = "./custom_instances/$finalDirName"
+                                        profile.name = rawName
+                                        profile.lastVersionId = modLoader.versionId
+                                        profile.pojavRendererName = "vulkan_zink"
+                                        profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + "Internal-21"
+                                        profile.ramAllocation = Math.max(3072, Math.min(4096, LauncherPreferences.PREF_RAM_ALLOCATION + 1024))
+
+                                        com.cannon.onyxlauncher.value.launcherprofiles.LauncherProfiles.mainProfileJson.profiles.put(finalDirName, profile)
+                                        com.cannon.onyxlauncher.value.launcherprofiles.LauncherProfiles.write()
+
+                                        completeModLoaderInstallation(context, modLoader) { text ->
+                                            installStatusText = text
+                                        }
+
+                                        withContext(Dispatchers.Main) {
+                                            installProgress = 1f
+                                            installStatusText = context.getString(R.string.modpack_installed_successfully)
+                                            Toast.makeText(context, context.getString(R.string.modpack_installed_successfully), Toast.LENGTH_SHORT).show()
+                                            onModpackInstalled(rawName, modLoader.versionId, finalDirName)
+                                        }
+                                    } else {
+                                        throw IOException("Nie udało się utworzyć profilu dla paczki")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e("OnyxLauncher", "Custom modpack install failed", e)
+                                    withContext(Dispatchers.Main) {
+                                        installProgress = null
+                                        installStatusText = ""
+                                        Toast.makeText(context, "Błąd instalacji: ${e.message}", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = AccentColor)
+                    ) {
+                        Text(text = stringResource(R.string.button_install), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1781,54 +2332,8 @@ fun ModpackDetailDialog(
                                             com.cannon.onyxlauncher.progresskeeper.ProgressKeeper.removeListener(ProgressLayout.INSTALL_MODPACK, progressListener)
 
                                             if (modLoader != null) {
-                                                if (modLoader.requiresGuiInstallation()) {
-                                                    withContext(Dispatchers.Main) {
-                                                        installStatusText = context.getString(R.string.status_downloading_forge_installer)
-                                                    }
-                                                    var forgeInstalled = false
-                                                    var forgeError: Exception? = null
-                                                    val forgeListener = object : com.cannon.onyxlauncher.modloaders.ModloaderDownloadListener {
-                                                        override fun onDownloadFinished(downloadedFile: File?) {
-                                                            forgeInstalled = true
-                                                        }
-                                                        override fun onDataNotAvailable() {
-                                                            forgeError = IOException(context.getString(R.string.no_forge_installer_for_version))
-                                                        }
-                                                        override fun onDownloadError(e: Exception) {
-                                                            forgeError = e
-                                                        }
-                                                    }
-                                                    modLoader.getDownloadTask(forgeListener).run()
-                                                    if (forgeError != null) throw forgeError!!
-                                                    
-                                                    withContext(Dispatchers.Main) {
-                                                        installStatusText = context.getString(R.string.status_launching_forge_gui_installer)
-                                                    }
-                                                    val forgeInstallFile = File(Tools.DIR_CACHE, "forge-" + modLoader.getVersionId() + "-installer.jar")
-                                                    val installerJar = File(Tools.DIR_CACHE, "forge-installer.jar")
-                                                    val intent = modLoader.getInstallationIntent(context, forgeInstallFile.takeIf { it.exists() } ?: installerJar)
-                                                    if (intent != null) {
-                                                        context.startActivity(intent)
-                                                    }
-                                                } else {
-                                                    withContext(Dispatchers.Main) {
-                                                        installStatusText = context.getString(R.string.status_downloading_fabric_quilt_loader)
-                                                    }
-                                                    var loaderInstalled = false
-                                                    var loaderError: Exception? = null
-                                                    val loaderListener = object : com.cannon.onyxlauncher.modloaders.ModloaderDownloadListener {
-                                                        override fun onDownloadFinished(downloadedFile: File?) {
-                                                            loaderInstalled = true
-                                                        }
-                                                        override fun onDataNotAvailable() {
-                                                            loaderError = IOException(context.getString(R.string.no_loader_for_version_err))
-                                                        }
-                                                        override fun onDownloadError(e: Exception) {
-                                                            loaderError = e
-                                                        }
-                                                    }
-                                                    modLoader.getDownloadTask(loaderListener).run()
-                                                    if (loaderError != null) throw loaderError!!
+                                                completeModLoaderInstallation(context, modLoader) { text ->
+                                                    installStatusText = text
                                                 }
 
                                                 withContext(Dispatchers.Main) {
@@ -2009,14 +2514,11 @@ fun InstanceDetailsScreen(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        if (uri != null) {
+        contract = ActivityResultContracts.GetMultipleContents()
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val displayName = (Tools.getFileName(context, uri) ?: "").trim().ifEmpty {
-                        "file_${System.currentTimeMillis()}"
-                    }
                     val destinationFolder = when {
                         activeTab == 1 -> modsFolder
                         activeTab == 2 && packType == 0 -> resourcePacksFolder
@@ -2025,19 +2527,39 @@ fun InstanceDetailsScreen(
                     }
                     if (destinationFolder != null) {
                         if (!destinationFolder.exists()) destinationFolder.mkdirs()
-                        val destFile = File(destinationFolder, displayName)
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            destFile.outputStream().use { output ->
-                                input.copyTo(output)
+                        var importedCount = 0
+                        for ((index, uri) in uris.withIndex()) {
+                            val displayName = (Tools.getFileName(context, uri) ?: "").trim().ifEmpty {
+                                "file_${System.currentTimeMillis()}_$index"
+                            }
+                            val destFile = File(destinationFolder, displayName)
+                            context.contentResolver.openInputStream(uri)?.use { input ->
+                                destFile.outputStream().use { output ->
+                                    input.copyTo(output)
+                                }
+                            }
+                            importedCount++
+                        }
+                        if (activeTab == 1) {
+                            try {
+                                generateFabricLoaderOverrides(instance.id)
+                            } catch (e: Exception) {
+                                Log.e("OnyxLauncher", "Error generating loader overrides", e)
                             }
                         }
                         withContext(Dispatchers.Main) {
-                            Toast.makeText(context, context.getString(R.string.import_file_success, displayName), Toast.LENGTH_SHORT).show()
+                            val message = if (importedCount == 1) {
+                                val singleName = Tools.getFileName(context, uris.first()) ?: "plik"
+                                context.getString(R.string.import_file_success, singleName)
+                            } else {
+                                context.getString(R.string.import_multiple_files_success, importedCount)
+                            }
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             refreshLists()
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("OnyxLauncher", "Failed to import file", e)
+                    Log.e("OnyxLauncher", "Failed to import files", e)
                     withContext(Dispatchers.Main) {
                         Toast.makeText(context, context.getString(R.string.import_file_error, e.message), Toast.LENGTH_LONG).show()
                     }
@@ -3721,7 +4243,9 @@ fun loadInstances(p: SharedPreferences): List<InstanceData> = try {
     val list = mutableListOf<InstanceData>()
     for (i in 0 until arr.length()) {
         val o = arr.getJSONObject(i)
-        list.add(InstanceData(o.getString("id"), o.getString("n"), o.getString("v")))
+        val rawVer = o.getString("v")
+        val cleanVer = extractBaseMinecraftVersion(rawVer)
+        list.add(InstanceData(o.getString("id"), o.getString("n"), cleanVer))
     }
     list
 } catch (e: Exception) { emptyList() }

@@ -589,4 +589,13 @@ se vuoi scaricare dalla sorgente ufficiale premi \"Passa al sito ufficiale"\ e r
     <string name="no_loader_for_version_err">Nessun caricatore per la versione</string>
     <string name="status_starting_download">Avvio download…</string>
     <string name="status_launching_forge_gui_installer">Esecuzione del programma di installazione grafico di Forge…</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">Informazioni su Onyx Launcher</string>
+    <string name="about_website_label">Sito web</string>
+    <string name="about_github_label">GitHub (codice sorgente e segnalazione bug)</string>
+    <string name="about_bug_reports">Hai trovato un bug? Segnalalo su GitHub Issues.</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">Apri link</string>
+    <string name="about_content_desc_info">Informazioni applicazione</string>
 </resources>

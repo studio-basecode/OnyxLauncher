@@ -588,4 +588,13 @@
     <string name="no_loader_for_version_err">没有版本加载程序</string>
     <string name="status_starting_download">开始下载...</string>
     <string name="status_launching_forge_gui_installer">运行 Forge 图形安装程序...</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">关于 Onyx 启动器</string>
+    <string name="about_website_label">官方网站</string>
+    <string name="about_github_label">GitHub（源代码与问题反馈）</string>
+    <string name="about_bug_reports">发现漏洞？请在 GitHub Issues 提交反馈。</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">打开链接</string>
+    <string name="about_content_desc_info">应用信息</string>
 </resources>

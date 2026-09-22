@@ -589,4 +589,13 @@
     <string name="no_loader_for_version_err">バージョンのローダーがありません</string>
     <string name="status_starting_download">ダウンロードを開始しています…</string>
     <string name="status_launching_forge_gui_installer">Forge グラフィカル インストーラーを実行しています…</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">Onyx Launcher について</string>
+    <string name="about_website_label">ウェブサイト</string>
+    <string name="about_github_label">GitHub（ソースコードとバグ報告）</string>
+    <string name="about_bug_reports">バグを見つけましたか？GitHub Issues で報告してください。</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">リンクを開く</string>
+    <string name="about_content_desc_info">アプリ情報</string>
 </resources>

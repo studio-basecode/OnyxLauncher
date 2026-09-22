@@ -622,4 +622,22 @@
     <string name="no_loader_for_version_err">No loader for this version</string>
     <string name="status_starting_download">Starting download…</string>
     <string name="status_launching_forge_gui_installer">Launching graphical Forge installer…</string>
+    <string name="source_custom">Custom Modpack</string>
+    <string name="custom_modpack_title">Custom Modpack (.zip, .mrpack)</string>
+    <string name="custom_modpack_desc">Select a modpack file (.zip or .mrpack) from your device. Supported formats: CurseForge (.zip), Modrinth (.mrpack), or custom instance ZIP.</string>
+    <string name="button_choose_pack_file">Choose modpack file</string>
+    <string name="import_multiple_files_success">Successfully imported %d file(s)</string>
+    <string name="importing_files_progress">Importing files: %1$d/%2$d</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">About Onyx Launcher</string>
+    <string name="about_website_label">Website</string>
+    <string name="about_website_url" translatable="false">https://basecodestudio.pages.dev</string>
+    <string name="about_github_label">GitHub (source code &amp; bug reports)</string>
+    <string name="about_github_url" translatable="false">https://github.com/studio-basecode/OnyxLauncher</string>
+    <string name="about_bug_reports">Found a bug? Report it on GitHub Issues.</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_play_store_url" translatable="false">https://play.google.com/store/apps/details?id=com.cannon.onyxlauncher</string>
+    <string name="about_open_link">Open link</string>
+    <string name="about_content_desc_info">App information</string>
 </resources>

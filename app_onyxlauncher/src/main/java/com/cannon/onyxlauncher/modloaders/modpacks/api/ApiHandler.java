@@ -113,12 +113,16 @@ public class ApiHandler {
     private static String parseQueries(HashMap<String, Object> query) {
         StringBuilder params = new StringBuilder("?");
         for (String param : query.keySet()) {
-            String value = Objects.toString(query.get(param));
+            Object obj = query.get(param);
+            if (obj == null) continue;
+            String value = obj.toString();
+            if (value.isEmpty()) continue;
             params.append(urlEncodeUTF8(param))
                     .append("=")
                     .append(urlEncodeUTF8(value))
                     .append("&");
         }
+        if (params.length() == 1) return "";
         return params.substring(0, params.length() - 1);
     }
 

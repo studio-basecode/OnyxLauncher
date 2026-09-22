@@ -588,4 +588,13 @@
     <string name="no_loader_for_version_err">Versiyon için yükleyici yok</string>
     <string name="status_starting_download">İndirme işlemi başlatılıyor…</string>
     <string name="status_launching_forge_gui_installer">Forge grafik yükleyicisini çalıştırma…</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">Onyx Launcher Hakkında</string>
+    <string name="about_website_label">Web sitesi</string>
+    <string name="about_github_label">GitHub (kaynak kodu ve hata raporları)</string>
+    <string name="about_bug_reports">Hata mı buldunuz? GitHub Issues üzerinden bildirin.</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">Bağlantıyı aç</string>
+    <string name="about_content_desc_info">Uygulama bilgisi</string>
 </resources>

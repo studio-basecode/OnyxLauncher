@@ -74,14 +74,45 @@ public class ForgeDownloadTask implements Runnable, Tools.DownloaderFeedback {
 
     public boolean findVersion() throws IOException {
         List<String> forgeVersions = ForgeUtils.downloadForgeVersions();
-        if(forgeVersions == null) return false;
-        String versionStart = mGameVersion+"-"+mLoaderVersion;
-        for(String versionName : forgeVersions) {
-            if(!versionName.startsWith(versionStart)) continue;
-            mFullVersion = versionName;
-            mDownloadUrl = ForgeUtils.getInstallerUrl(mFullVersion);
-            return true;
+        if(forgeVersions == null || forgeVersions.isEmpty()) return false;
+        
+        String cleanLoaderVersion = mLoaderVersion != null ? mLoaderVersion.trim() : "";
+        if (cleanLoaderVersion.startsWith("forge-") || cleanLoaderVersion.startsWith("Forge-")) {
+            cleanLoaderVersion = cleanLoaderVersion.substring(6);
         }
+        
+        String mcPrefix = mGameVersion != null ? (mGameVersion + "-") : "";
+        
+        // 1. If a specific loader build is requested (and it's not "recommended" / "latest" / empty)
+        if (!cleanLoaderVersion.isEmpty() && !cleanLoaderVersion.equalsIgnoreCase("recommended") && !cleanLoaderVersion.equalsIgnoreCase("latest")) {
+            // Check for exact start match: e.g. "1.12.2-14.23.5.2860"
+            String versionStart = mcPrefix + cleanLoaderVersion;
+            for (String versionName : forgeVersions) {
+                if (versionName.startsWith(versionStart) || versionName.equalsIgnoreCase(cleanLoaderVersion)) {
+                    mFullVersion = versionName;
+                    mDownloadUrl = ForgeUtils.getInstallerUrl(mFullVersion);
+                    return true;
+                }
+            }
+            // Check for contains match: e.g. contains "14.23.5.2860" and matches MC version
+            for (String versionName : forgeVersions) {
+                if (versionName.startsWith(mcPrefix) && versionName.contains(cleanLoaderVersion)) {
+                    mFullVersion = versionName;
+                    mDownloadUrl = ForgeUtils.getInstallerUrl(mFullVersion);
+                    return true;
+                }
+            }
+        }
+        
+        // 2. Recommended / Latest / Fallback: Pick the first (latest/recommended) matching Forge build for this MC version
+        for (String versionName : forgeVersions) {
+            if (versionName.startsWith(mcPrefix)) {
+                mFullVersion = versionName;
+                mDownloadUrl = ForgeUtils.getInstallerUrl(mFullVersion);
+                return true;
+            }
+        }
+        
         return false;
     }
 

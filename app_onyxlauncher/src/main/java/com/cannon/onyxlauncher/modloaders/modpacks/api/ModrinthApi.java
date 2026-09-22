@@ -209,7 +209,7 @@ public class ModrinthApi implements ModpackApi{
         return null;
     }
 
-    private ModLoader installMrpack(File mrpackFile, File instanceDestination) throws IOException {
+    public ModLoader installMrpack(File mrpackFile, File instanceDestination) throws IOException {
         try (ZipFile modpackZipFile = new ZipFile(mrpackFile)){
             ModrinthIndex modrinthIndex = Tools.GLOBAL_GSON.fromJson(
                     Tools.read(ZipUtils.getEntryStream(modpackZipFile, "modrinth.index.json")),

@@ -588,4 +588,13 @@
     <string name="no_loader_for_version_err">No hay cargador para la versión</string>
     <string name="status_starting_download">Iniciando descarga…</string>
     <string name="status_launching_forge_gui_installer">Ejecutando el instalador gráfico de Forge…</string>
+
+    <!-- About / Info screen -->
+    <string name="about_title">Acerca de Onyx Launcher</string>
+    <string name="about_website_label">Sitio web</string>
+    <string name="about_github_label">GitHub (código fuente y reporte de errores)</string>
+    <string name="about_bug_reports">¿Encontraste un error? Infórmalo en GitHub Issues.</string>
+    <string name="about_play_store_label">Google Play Store</string>
+    <string name="about_open_link">Abrir enlace</string>
+    <string name="about_content_desc_info">Información de la aplicación</string>
 </resources>

@@ -94,11 +94,23 @@ public class ModDownloader {
         public void run() {
             try {
                 FileInfo fileInfo = mFileInfoProvider.getFileInfo();
-                if(fileInfo == null) return;
-                new DownloadTask(new String[]{fileInfo.url},
-                        new File(mDestinationDirectory, fileInfo.relativePath), fileInfo.sha1).run();
-            }catch (IOException e) {
-                downloadFailed(e);
+                if(fileInfo == null) {
+                    if (mUseFileCount) mDownloadSize.addAndGet(1);
+                    return;
+                }
+                File dest = new File(mDestinationDirectory, fileInfo.relativePath);
+                File parent = dest.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+                new DownloadTask(new String[]{fileInfo.url}, dest, fileInfo.sha1).run();
+            } catch (Throwable e) {
+                if (e instanceof InterruptedIOException || e instanceof InterruptedException) {
+                    downloadFailed(new InterruptedIOException("Interrupted"));
+                } else {
+                    android.util.Log.w("ModDownloader", "Failed to query/download file: " + e.getMessage());
+                    if (mUseFileCount) mDownloadSize.addAndGet(1);
+                }
             }
         }
     }
@@ -118,8 +130,13 @@ public class ModDownloader {
 
         @Override
         public void run() {
+            boolean success = false;
             for(String sourceUrl : mDownloadUrls) {
                 try {
+                    File parent = mDestination.getParentFile();
+                    if (parent != null && !parent.exists()) {
+                        parent.mkdirs();
+                    }
                     DownloadUtils.ensureSha1(mDestination, mSha1, (Callable<Void>) () -> {
                         IOException exception = tryDownload(sourceUrl);
                         if(exception != null) {
@@ -127,16 +144,24 @@ public class ModDownloader {
                         }
                         return null;
                     });
-
-                }catch (IOException e) {
-                    downloadFailed(e);
+                    success = true;
+                    break;
+                } catch (InterruptedIOException e) {
+                    downloadFailed(new InterruptedIOException("Interrupted"));
+                    return;
+                } catch (Throwable e) {
+                    android.util.Log.w("ModDownloader", "Failed to download " + mDestination.getName() + " from " + sourceUrl + ": " + e.getMessage());
                 }
+            }
+            if (!success && mUseFileCount) {
+                // Advance counter so progress reaches 100%
+                mDownloadSize.addAndGet(1);
             }
         }
 
         private IOException tryDownload(String sourceUrl) throws InterruptedException {
             IOException exception = null;
-            for (int i = 0; i < 5; i++) {
+            for (int i = 0; i < 3; i++) {
                 try {
                     DownloadUtils.downloadFileMonitored(sourceUrl, mDestination, getThreadLocalBuffer(), this);
                     if(mUseFileCount) mDownloadSize.addAndGet(1);
@@ -144,7 +169,6 @@ public class ModDownloader {
                 } catch (InterruptedIOException e) {
                     throw new InterruptedException();
                 } catch (IOException e) {
-                    e.printStackTrace();
                     exception = e;
                 }
                 if(!mUseFileCount) {

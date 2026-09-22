@@ -76,7 +76,9 @@ public class CurseforgeApi implements ModpackApi{
             classId = searchFilters.isModpack ? CURSEFORGE_MODPACK_CLASS_ID : CURSEFORGE_MOD_CLASS_ID;
         }
         params.put("classId", classId);
-        params.put("searchFilter", searchFilters.name);
+        if (searchFilters.name != null && !searchFilters.name.trim().isEmpty()) {
+            params.put("searchFilter", searchFilters.name.trim());
+        }
         params.put("sortField", CURSEFORGE_SORT_RELEVANCY);
         params.put("sortOrder", "desc");
         if(searchFilters.mcVersion != null && !searchFilters.mcVersion.isEmpty())
@@ -252,7 +254,7 @@ public class CurseforgeApi implements ModpackApi{
         return index + data.size();
     }
 
-    private ModLoader installCurseforgeZip(File zipFile, File instanceDestination) throws IOException {
+    public ModLoader installCurseforgeZip(File zipFile, File instanceDestination) throws IOException {
         try (ZipFile modpackZipFile = new ZipFile(zipFile)){
             CurseManifest curseManifest = Tools.GLOBAL_GSON.fromJson(
                     Tools.read(ZipUtils.getEntryStream(modpackZipFile, "manifest.json")),
@@ -294,20 +296,25 @@ public class CurseforgeApi implements ModpackApi{
         if(primaryModLoader == null) primaryModLoader = minecraft.modLoaders[0];
         String modLoaderId = primaryModLoader.id;
         int dashIndex = modLoaderId.indexOf('-');
-        String modLoaderName = modLoaderId.substring(0, dashIndex);
-        String modLoaderVersion = modLoaderId.substring(dashIndex+1);
-        Log.i("CurseforgeApi", modLoaderId + " " + modLoaderName + " "+modLoaderVersion);
+        String modLoaderName = dashIndex != -1 ? modLoaderId.substring(0, dashIndex) : modLoaderId;
+        String modLoaderVersion = dashIndex != -1 ? modLoaderId.substring(dashIndex + 1) : "recommended";
+        Log.i("CurseforgeApi", modLoaderId + " " + modLoaderName + " " + modLoaderVersion);
         int modLoaderTypeInt;
-        switch (modLoaderName) {
+        switch (modLoaderName.toLowerCase(Locale.ROOT)) {
             case "forge":
                 modLoaderTypeInt = ModLoader.MOD_LOADER_FORGE;
                 break;
             case "fabric":
                 modLoaderTypeInt = ModLoader.MOD_LOADER_FABRIC;
                 break;
+            case "neoforge":
+                modLoaderTypeInt = ModLoader.MOD_LOADER_NEOFORGE;
+                break;
+            case "quilt":
+                modLoaderTypeInt = ModLoader.MOD_LOADER_QUILT;
+                break;
             default:
                 return null;
-            //TODO: Quilt is also Forge? How does that work?
         }
         return new ModLoader(modLoaderTypeInt, modLoaderVersion, minecraft.version);
     }
@@ -323,7 +330,7 @@ public class CurseforgeApi implements ModpackApi{
         if (fallbackResponse != null && !fallbackResponse.get("data").isJsonNull()){
             JsonObject modData = fallbackResponse.get("data").getAsJsonObject();
             int id = modData.get("id").getAsInt();
-            return String.format("https://edge.forgecdn.net/files/%s/%s/%s", id/1000, id % 1000, modData.get("fileName").getAsString());
+            return String.format(Locale.ROOT, "https://edge.forgecdn.net/files/%d/%03d/%s", id / 1000, id % 1000, modData.get("fileName").getAsString());
         }
 
         return null;
