@@ -4,7 +4,8 @@
 [![Architecture](https://img.shields.io/badge/Architecture-ARM64%20%7C%20ARMv7-2196F3?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-LGPL--3.0-orange?style=flat-square)](LICENSE)
 [![Base](https://img.shields.io/badge/Base-PojavLauncher-64748B?style=flat-square)](https://github.com/PojavLauncherTeam/PojavLauncher)
-[![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode)
+[![Ko-fi](https://img.shields.io/badge/☕_Buy_me_a_coffee-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode)
+[![Sponsor](https://img.shields.io/badge/🚀_Become_a_Sponsor-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode/tiers)
 
 OnyxLauncher is an Android launcher for Minecraft: Java Edition, built on top of PojavLauncher and extended with a modern instance manager, modpack browsing, custom profile icons, mobile performance defaults, renderer controls, and mod/resource/shader workflows.
 
@@ -138,3 +139,18 @@ This project uses PojavLauncher as its launcher foundation and preserves the LGP
 PojavLauncher upstream:
 
 [https://github.com/PojavLauncherTeam/PojavLauncher](https://github.com/PojavLauncherTeam/PojavLauncher)
+
+---
+
+## ☕ Support OnyxLauncher
+
+OnyxLauncher is free and open-source, built in spare time. Every fix, optimization, and new Minecraft version compatibility patch is driven by community feedback — and fueled by coffee. If the launcher works on your device, saves you setup time, or lets you enjoy mods you couldn't run before, consider supporting its development.
+
+[![Buy me a coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode)
+[![Become a Sponsor](https://img.shields.io/badge/🚀_Become_a_Sponsor-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode/tiers)
+
+- ✅ One-time or monthly — your choice, no pressure
+- ✅ Sponsors get their name listed in the in-app credits
+- ✅ Directly funds Java 25 support, renderer improvements, and new device compatibility
+
+Every contribution — big or small — keeps this project moving. Thank you. ❤️
