@@ -4,6 +4,7 @@
 [![Architecture](https://img.shields.io/badge/Architecture-ARM64%20%7C%20ARMv7-2196F3?style=flat-square)](#)
 [![License](https://img.shields.io/badge/License-LGPL--3.0-orange?style=flat-square)](LICENSE)
 [![Base](https://img.shields.io/badge/Base-PojavLauncher-64748B?style=flat-square)](https://github.com/PojavLauncherTeam/PojavLauncher)
+[![Support on Ko-fi](https://img.shields.io/badge/Support-Ko--fi-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white)](https://ko-fi.com/basecode)
 
 OnyxLauncher is an Android launcher for Minecraft: Java Edition, built on top of PojavLauncher and extended with a modern instance manager, modpack browsing, custom profile icons, mobile performance defaults, renderer controls, and mod/resource/shader workflows.
 
