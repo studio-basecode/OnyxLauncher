@@ -95,7 +95,7 @@ configurations {
 android {
     namespace 'com.cannon.onyxlauncher'
 
-    compileSdk = 35
+    compileSdk = 36
 
     lintOptions {
         abortOnError false
@@ -120,10 +120,10 @@ android {
 
     defaultConfig {
         applicationId "com.cannon.onyxlauncher"
-        minSdkVersion 21
+        minSdkVersion 24
         targetSdkVersion 36
-        versionCode 6
-        versionName "1.4"
+        versionCode 7
+        versionName "1.5"
         multiDexEnabled true //important
         resValue 'string', 'curseforge_api_key', getCFApiKey()
     }
@@ -212,12 +212,168 @@ android {
 }
 
 afterEvaluate {
+    def alignElf64FileTo16Kb = { File soFile ->
+        if (!soFile.isFile() || !soFile.name.endsWith(".so")) return
+        byte[] origBytes = soFile.bytes
+        if (origBytes.length < 64) return
+        if (origBytes[0] != (byte) 0x7F || origBytes[1] != (byte) 0x45 || origBytes[2] != (byte) 0x4C || origBytes[3] != (byte) 0x46) return
+        if (origBytes[4] != (byte) 2) return // Only 64-bit ELF (arm64-v8a, x86_64)
+
+        java.nio.ByteBuffer origBuf = java.nio.ByteBuffer.wrap(origBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        long e_phoff = origBuf.getLong(32)
+        long e_shoff = origBuf.getLong(40)
+        int e_phentsize = origBuf.getShort(54) & 0xFFFF
+        int e_phnum = origBuf.getShort(56) & 0xFFFF
+        int e_shentsize = origBuf.getShort(58) & 0xFFFF
+        int e_shnum = origBuf.getShort(60) & 0xFFFF
+
+        List<long[]> phdrs = new ArrayList<>()
+        List<long[]> loads = new ArrayList<>()
+        for (int i = 0; i < e_phnum; i++) {
+            int off = (int) (e_phoff + i * e_phentsize)
+            long p_type = origBuf.getInt(off) & 0xFFFFFFFFL
+            long p_flags = origBuf.getInt(off + 4) & 0xFFFFFFFFL
+            long p_offset = origBuf.getLong(off + 8)
+            long p_vaddr = origBuf.getLong(off + 16)
+            long p_paddr = origBuf.getLong(off + 24)
+            long p_filesz = origBuf.getLong(off + 32)
+            long p_memsz = origBuf.getLong(off + 40)
+            long p_align = origBuf.getLong(off + 48)
+            long[] entry = [p_type, p_flags, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align] as long[]
+            phdrs.add(entry)
+            if (p_type == 1L) loads.add(entry)
+        }
+        if (loads.isEmpty()) return
+        boolean allAligned = true
+        for (long[] ld : loads) {
+            if (ld[7] < 0x4000L || ((ld[3] - ld[2]) % 0x4000L) != 0L) {
+                allAligned = false
+                break
+            }
+        }
+        if (allAligned) return
+
+        long maxLoadEnd = 0L
+        for (long[] ld : loads) {
+            long end = ld[3] + ld[5]
+            if (end > maxLoadEnd) maxLoadEnd = end
+        }
+        int paddedLoadEnd = (int) ((maxLoadEnd + 0x3FFFL) & ~0x3FFFL)
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream(paddedLoadEnd + 65536)
+        byte[] baseOut = new byte[paddedLoadEnd]
+        for (long[] ld : loads) {
+            int p_off = (int) ld[2]
+            int p_vaddr = (int) ld[3]
+            int p_filesz = (int) ld[5]
+            if (p_filesz > 0) {
+                System.arraycopy(origBytes, p_off, baseOut, p_vaddr, p_filesz)
+            }
+        }
+
+        for (long[] p : phdrs) {
+            if (p[0] == 1L) {
+                p[2] = p[3]
+                if (p[7] < 0x4000L) p[7] = 0x4000L
+            } else if (p[5] > 0L || p[6] > 0L) {
+                for (long[] ld : loads) {
+                    long span = Math.max(Math.max(ld[5], ld[6]), 1L)
+                    if (p[3] >= ld[3] && p[3] < ld[3] + span) {
+                        p[2] = p[3]
+                        break
+                    }
+                }
+            }
+        }
+
+        baos.write(baseOut)
+        long new_shoff = e_shoff
+        if (e_shoff > 0L && e_shnum > 0) {
+            List<long[]> shdrs = new ArrayList<>()
+            for (int i = 0; i < e_shnum; i++) {
+                int off = (int) (e_shoff + i * e_shentsize)
+                long sh_name = origBuf.getInt(off) & 0xFFFFFFFFL
+                long sh_type = origBuf.getInt(off + 4) & 0xFFFFFFFFL
+                long sh_flags = origBuf.getLong(off + 8)
+                long sh_addr = origBuf.getLong(off + 16)
+                long sh_offset = origBuf.getLong(off + 24)
+                long sh_size = origBuf.getLong(off + 32)
+                long sh_link = origBuf.getInt(off + 40) & 0xFFFFFFFFL
+                long sh_info = origBuf.getInt(off + 44) & 0xFFFFFFFFL
+                long sh_addralign = origBuf.getLong(off + 48)
+                long sh_entsize = origBuf.getLong(off + 56)
+                if (sh_type == 0L) {
+                    // SHT_NULL
+                } else if ((sh_flags & 0x2L) != 0L) {
+                    sh_offset = sh_addr
+                } else if (sh_type != 8L && sh_size > 0L) {
+                    int align = (int) Math.max(sh_addralign, 8L)
+                    int pad = (align - (baos.size() % align)) % align
+                    if (pad > 0) baos.write(new byte[pad])
+                    sh_offset = baos.size()
+                    baos.write(origBytes, (int) origBuf.getLong(off + 24), (int) sh_size)
+                }
+                shdrs.add([sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link, sh_info, sh_addralign, sh_entsize] as long[])
+            }
+            int pad = (8 - (baos.size() % 8)) % 8
+            if (pad > 0) baos.write(new byte[pad])
+            new_shoff = baos.size()
+            java.nio.ByteBuffer shBuf = java.nio.ByteBuffer.allocate(e_shnum * e_shentsize).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            for (long[] s : shdrs) {
+                shBuf.putInt((int) s[0])
+                shBuf.putInt((int) s[1])
+                shBuf.putLong(s[2])
+                shBuf.putLong(s[3])
+                shBuf.putLong(s[4])
+                shBuf.putLong(s[5])
+                shBuf.putInt((int) s[6])
+                shBuf.putInt((int) s[7])
+                shBuf.putLong(s[8])
+                shBuf.putLong(s[9])
+            }
+            baos.write(shBuf.array())
+        }
+
+        byte[] finalBytes = baos.toByteArray()
+        java.nio.ByteBuffer outBuf = java.nio.ByteBuffer.wrap(finalBytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        if (e_shoff > 0L && e_shnum > 0) {
+            outBuf.putLong(40, new_shoff)
+        }
+        for (int i = 0; i < e_phnum; i++) {
+            int off = (int) (e_phoff + i * e_phentsize)
+            long[] p = phdrs.get(i)
+            outBuf.putInt(off, (int) p[0])
+            outBuf.putInt(off + 4, (int) p[1])
+            outBuf.putLong(off + 8, p[2])
+            outBuf.putLong(off + 16, p[3])
+            outBuf.putLong(off + 24, p[4])
+            outBuf.putLong(off + 32, p[5])
+            outBuf.putLong(off + 40, p[6])
+            outBuf.putLong(off + 48, p[7])
+        }
+        soFile.bytes = finalBytes
+        println("Aligned 64-bit native library to 16KB page size: ${soFile.parentFile?.name}/${soFile.name}")
+    }
+
     tasks.configureEach { task ->
         if (task.name.startsWith("merge") && task.name.endsWith("Assets")) {
             task.dependsOn(":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar")
         }
         if (task.name.startsWith("generateReleaseLint") || task.name == "generateReleaseLintVitalReportModel") {
             task.mustRunAfter(":forge_installer:jar", ":arc_dns_injector:jar", ":jre_engine:jar", ":cacio_compat:jar")
+        }
+        if ((task.name.startsWith("merge") && task.name.endsWith("NativeLibs")) ||
+            (task.name.startsWith("strip") && task.name.endsWith("DebugSymbols"))) {
+            task.doLast {
+                task.outputs.files.each { File outRoot ->
+                    if (outRoot.exists()) {
+                        outRoot.eachFileRecurse { File f ->
+                            if (f.name.endsWith(".so")) {
+                                alignElf64FileTo16Kb(f)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -240,7 +396,7 @@ dependencies {
 
     implementation 'org.tukaani:xz:1.8'
     implementation 'net.sourceforge.htmlcleaner:htmlcleaner:2.6.1'
-    implementation 'com.bytedance:bytehook:1.0.9'
+    implementation 'com.bytedance:bytehook:1.0.10'
 
     implementation fileTree(dir: 'libs', include: ['*.jar', '*.aar'])
 

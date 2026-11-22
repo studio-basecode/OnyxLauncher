@@ -14,6 +14,10 @@ public class ModDetail extends ModItem {
     /* SHA 1 hashes, null if a hash is unavailable */
     public String[] versionHashes;
     public String[] versionDependencyProjectIds;
+    public String[] versionReleaseTypes;
+    public String[] versionDates;
+    public String[] versionIds;
+    public String[] versionChangelogs;
     public String[] screenshotUrls;
     public ModDetail(ModItem item, String[] versionNames, String[] mcVersionNames, String[] versionUrls, String[] hashes) {
         this(item, versionNames, mcVersionNames, null, versionUrls, hashes);

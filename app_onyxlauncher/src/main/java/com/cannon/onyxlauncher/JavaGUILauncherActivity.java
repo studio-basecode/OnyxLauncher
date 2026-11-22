@@ -5,6 +5,8 @@ import android.app.ProgressDialog;
 import android.content.ClipboardManager;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
@@ -12,6 +14,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
@@ -34,7 +37,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -51,6 +56,11 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
     private LinearLayout mTouchPad;
     private ImageView mMousePointerImageView;
     private GestureDetector mGestureDetector;
+    private View mWaitOverlay;
+    private TextView mWaitStatusText;
+    private final Handler mStatusHandler = new Handler(Looper.getMainLooper());
+    private Runnable mStatusRunnable;
+    private volatile boolean mIsDestroyed;
 
     private boolean mIsVirtualMouseEnabled;
     
@@ -76,6 +86,8 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         mLoggerView = findViewById(R.id.launcherLoggerView);
         mMousePointerImageView = findViewById(R.id.main_mouse_pointer);
         mTextureView = findViewById(R.id.installmod_surfaceview);
+        mWaitOverlay = findViewById(R.id.installmod_wait_overlay);
+        mWaitStatusText = findViewById(R.id.installmod_wait_status);
         mGestureDetector = new GestureDetector(this, new SingleTapConfirm());
         mTouchPad.setFocusable(false);
         mTouchPad.setVisibility(View.GONE);
@@ -161,6 +173,10 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
             final Uri resourceUri = (Uri) extras.getParcelable("modUri");
             if(extras.getBoolean("openLogOutput", false)) openLogOutput(null);
             if (javaArgs != null) {
+                if (mWaitOverlay != null) {
+                    mWaitOverlay.setVisibility(View.VISIBLE);
+                    startLogStatusPolling();
+                }
                 startModInstaller(null, javaArgs);
             }else if(resourceUri != null) {
                 ProgressDialog barrierDialog = Tools.getWaitingDialog(this, R.string.multirt_progress_caching);
@@ -180,6 +196,57 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
                 Tools.dialogForceClose(JavaGUILauncherActivity.this);
             }
         });
+    }
+
+    private void startLogStatusPolling() {
+        final File logFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
+        mStatusRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mIsDestroyed || isFinishing()) return;
+                OnyxApplication.sExecutorService.execute(() -> {
+                    final String lastLine = readLastNonEmptyLogLine(logFile);
+                    if (mIsDestroyed || isFinishing() || lastLine == null || lastLine.isEmpty()) return;
+                    runOnUiThread(() -> {
+                        if (!mIsDestroyed && mWaitStatusText != null) {
+                            mWaitStatusText.setText(getString(R.string.startup_overlay_current_task, lastLine));
+                        }
+                    });
+                });
+                if (!mIsDestroyed && mWaitOverlay != null && mWaitOverlay.getVisibility() == View.VISIBLE) {
+                    mStatusHandler.postDelayed(this, 500);
+                }
+            }
+        };
+        mStatusHandler.postDelayed(mStatusRunnable, 500);
+    }
+
+    private static String readLastNonEmptyLogLine(File logFile) {
+        if (!logFile.exists() || logFile.length() == 0) return null;
+        try (RandomAccessFile raf = new RandomAccessFile(logFile, "r")) {
+            long len = raf.length();
+            int bytesToRead = (int) Math.min(4096, len);
+            raf.seek(len - bytesToRead);
+            byte[] buf = new byte[bytesToRead];
+            raf.readFully(buf);
+            String chunk = new String(buf, StandardCharsets.UTF_8);
+            String[] lines = chunk.split("\\r?\\n");
+            for (int i = lines.length - 1; i >= 0; i--) {
+                String trimmed = lines[i].trim();
+                if (!trimmed.isEmpty()) {
+                    return trimmed;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    @Override
+    protected void onDestroy() {
+        mIsDestroyed = true;
+        mStatusHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void startModInstallerWithUri(Uri uri) {
@@ -209,11 +276,17 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         }
         String nearestRuntime = MultiRTUtils.getNearestJreName(javaVersion);
         if(nearestRuntime == null) {
-            finalErrorDialog(getString(R.string.multirt_nocompatiblert, javaVersion));
-            return null;
+            nearestRuntime = NewJREUtil.getRecommendedInternalRuntimeName(javaVersion);
+        }
+        if (nearestRuntime != null && !Tools.isRuntimeInstalled(nearestRuntime)) {
+            try {
+                NewJREUtil.installInternalRuntime(this, nearestRuntime);
+            } catch (Exception e) {
+                Log.e("JavaGUILauncher", "Failed to install internal runtime: " + nearestRuntime, e);
+            }
         }
         Runtime selectedRuntime = MultiRTUtils.forceReread(nearestRuntime);
-        if (selectedRuntime.javaVersion < javaVersion) {
+        if (selectedRuntime == null || selectedRuntime.javaVersion < javaVersion) {
             finalErrorDialog(getString(R.string.multirt_nocompatiblert, javaVersion));
             return null;
         }
@@ -360,12 +433,29 @@ public class JavaGUILauncherActivity extends BaseActivity implements View.OnTouc
         JREUtils.redirectAndPrintJRELog();
         try {
             List<String> javaArgList = new ArrayList<>();
-            javaArgList.add("-Xmx1536M");
 
-            if (runtime.javaVersion <= 17) {
+            // Forge and NeoForge CLI installers do not need an AWT display.  In fact,
+            // adding the Caciocavallo bootstrap (which sets headless=false) makes the
+            // Java 17 Forge installer exit before it writes its version profile.
+            boolean isHeadlessInstaller = javaArgs != null && javaArgs.contains("--installClient");
+            if (isHeadlessInstaller) {
+                // This activity has its own Android process.  Reserving the game-sized
+                // 1.5 GB heap here makes HotSpot fail while it is starting on Android 16
+                // devices, before the installer sees its arguments.  The installer only
+                // downloads/extracts files, so a 512 MB cap is ample and keeps it inside
+                // the per-process memory budget.
+                // JREUtils contributes the game's configured -Xms/-Xmx before
+                // these arguments.  Override both values: overriding only Xmx
+                // leaves a larger game-sized Xms and HotSpot rejects the VM.
+                javaArgList.add("-Xms128M");
+                javaArgList.add("-Xmx512M");
+                javaArgList.add("-Djava.awt.headless=true");
+            } else if (runtime.javaVersion <= 17) {
+                javaArgList.add("-Xmx1536M");
                 // Enable Caciocavallo AWT (only works with Java <= 17)
                 Tools.getCacioJavaArgs(javaArgList, runtime.javaVersion == 8);
             } else {
+                javaArgList.add("-Xmx1536M");
                 // Java 21+: Caciocavallo doesn't support it; use headless mode for CLI installers (Forge/NeoForge)
                 javaArgList.add("-Djava.awt.headless=true");
                 javaArgList.add("--add-opens=java.base/java.util=ALL-UNNAMED");

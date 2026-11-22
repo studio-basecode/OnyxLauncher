@@ -101,6 +101,13 @@ public class TouchCharInput extends androidx.appcompat.widget.AppCompatEditText 
     /** Lose ability to exist, take focus and have some text being input */
     public void disable(){
         clear();
+        try {
+            InputMethodManager imm = (InputMethodManager) getContext().getSystemService(INPUT_METHOD_SERVICE);
+            if (imm != null && getWindowToken() != null) {
+                imm.hideSoftInputFromWindow(getWindowToken(), 0);
+            }
+        } catch (Exception ignored) {
+        }
         setVisibility(GONE);
         clearFocus();
         setEnabled(false);

@@ -36,6 +36,7 @@ public class ControlButton extends TextView implements ControlInterface {
 
     protected boolean mIsToggled = false;
     protected boolean mIsPointerOutOfBounds = false;
+    private final int[] mDispatchedKeycodes = new int[4];
 
     public ControlButton(ControlLayout layout, ControlData properties) {
         super(layout.getContext());
@@ -189,10 +190,30 @@ public class ControlButton extends TextView implements ControlInterface {
 
     public void sendKeyPresses(boolean isDown){
         setActivated(isDown);
-        for(int keycode : mProperties.keycodes){
+        for(int i = 0; i < mProperties.keycodes.length; i++){
+            int keycode = mProperties.keycodes[i];
             if(keycode >= GLFW_KEY_UNKNOWN){
-                sendKeyPress(keycode, CallbackBridge.getCurrentMods(), isDown);
-                CallbackBridge.setModifiers(keycode, isDown);
+                int effectiveKeycode = keycode;
+                if (keycode == LwjglGlfwKeycode.GLFW_KEY_T) {
+                    if (isDown) {
+                        if (!CallbackBridge.isGrabbing()) {
+                            effectiveKeycode = LwjglGlfwKeycode.GLFW_KEY_ESCAPE;
+                            if (MainActivity.touchCharInput != null && MainActivity.touchCharInput.isEnabled()) {
+                                MainActivity.touchCharInput.disable();
+                            }
+                        }
+                        if (i < mDispatchedKeycodes.length) {
+                            mDispatchedKeycodes[i] = effectiveKeycode;
+                        }
+                    } else {
+                        if (i < mDispatchedKeycodes.length && mDispatchedKeycodes[i] != 0) {
+                            effectiveKeycode = mDispatchedKeycodes[i];
+                            mDispatchedKeycodes[i] = 0;
+                        }
+                    }
+                }
+                sendKeyPress(effectiveKeycode, CallbackBridge.getCurrentMods(), isDown);
+                CallbackBridge.setModifiers(effectiveKeycode, isDown);
             }else{
                 Log.i("punjabilauncher", "sendSpecialKey("+keycode+","+isDown+")");
                 sendSpecialKey(keycode, isDown);

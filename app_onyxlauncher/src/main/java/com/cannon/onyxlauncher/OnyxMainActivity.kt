@@ -1,5 +1,7 @@
 package com.cannon.onyxlauncher
 
+
+
 import java.io.IOException
 import com.kdt.mcgui.ProgressLayout
 import com.cannon.onyxlauncher.modloaders.modpacks.models.Constants
@@ -81,6 +83,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.lazy.LazyRow
 import kotlinx.coroutines.delay
 import com.cannon.onyxlauncher.modloaders.modpacks.api.CommonApi
+import com.cannon.onyxlauncher.modloaders.modpacks.api.ModpackInstaller
 import com.cannon.onyxlauncher.modloaders.modpacks.models.SearchFilters
 import com.cannon.onyxlauncher.modloaders.modpacks.models.ModItem
 import com.cannon.onyxlauncher.modloaders.modpacks.models.ModDetail
@@ -89,6 +92,15 @@ import com.cannon.onyxlauncher.modloaders.modpacks.api.ModrinthApi
 import com.cannon.onyxlauncher.modloaders.modpacks.api.TechnicApi
 import com.cannon.onyxlauncher.modloaders.modpacks.api.ATLauncherApi
 import com.cannon.onyxlauncher.modloaders.modpacks.api.FtbLegacyApi
+
+fun android.content.Context.findActivity(): android.app.Activity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is android.app.Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
 
 val BgDark = Color(0xFF0F172A)
 val CardBg = Color(0xFF1E293B)
@@ -102,6 +114,45 @@ fun getInstanceDir(instanceId: String): File {
     LauncherProfiles.load()
     val p = LauncherProfiles.mainProfileJson.profiles.get(instanceId)
     return if (p != null) Tools.getGameDirPath(p) else File(Tools.DIR_GAME_HOME, "instances/$instanceId")
+}
+
+fun recommendedModpackRamMb(context: Context): Int {
+    val totalRamMb = Tools.getTotalDeviceMemory(context)
+    if (totalRamMb in 1..5499) {
+        return Math.min(4096, Math.max(2048, Math.min(totalRamMb - 1024, Math.max(LauncherPreferences.PREF_RAM_ALLOCATION, 3072))))
+    }
+    return 4096
+}
+
+fun optimizeHeavyModpackProfile(context: Context, profile: MinecraftProfile, instanceDir: File) {
+    val isCustomPack = profile.gameDir?.contains("custom_instances/") == true
+    val modCount = File(instanceDir, "mods").listFiles()?.size ?: 0
+    if (!isCustomPack && modCount < 50) return
+
+    if (profile.pojavRendererName.isNullOrBlank() || "vulkan_zink" == profile.pojavRendererName) {
+        profile.pojavRendererName = "opengles2"
+    }
+    if (profile.ramAllocation == null || profile.ramAllocation < 3584 || profile.ramAllocation > 4096) {
+        profile.ramAllocation = recommendedModpackRamMb(context)
+    }
+    if (profile.resolutionScale == null || profile.resolutionScale <= 0 || profile.resolutionScale > 55) {
+        profile.resolutionScale = 50
+    }
+    profile.forceVsync = false
+}
+
+fun isGameProcessRunning(context: Context): Boolean {
+    val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return false
+    return am.runningAppProcesses?.any { it.processName.endsWith(":game") } == true
+}
+
+fun killGameProcessIfRunning(context: Context) {
+    val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager ?: return
+    am.runningAppProcesses?.filter { it.processName.endsWith(":game") }?.forEach { proc ->
+        try {
+            android.os.Process.killProcess(proc.pid)
+        } catch (_: Exception) {}
+    }
 }
 
 fun getUniqueInstanceName(baseName: String, instances: List<InstanceData>): String {
@@ -255,9 +306,24 @@ fun getNeoForgeBaseVersion(neoforgeVersion: String): String {
     if (parts.size >= 2) {
         val major = parts[0]
         val minor = parts[1]
+        if (major == "47" && minor == "1") return "1.20.1"
         return if (minor == "0") "1.$major" else "1.$major.$minor"
     }
     return ""
+}
+
+fun getTargetJavaVersionForMc(mcVersion: String, loader: String? = null): Int {
+    val cleanMc = extractBaseMinecraftVersion(mcVersion)
+    val parts = cleanMc.split('.')
+    val major = parts.getOrNull(1)?.toIntOrNull() ?: 20
+    val minor = parts.getOrNull(2)?.toIntOrNull() ?: 0
+
+    if (major > 20 || (major == 20 && minor >= 5)) {
+        return 21
+    } else if (major >= 18 || (major == 20 && minor < 5) || loader == "NeoForge" || mcVersion.contains("neoforge")) {
+        return 17
+    }
+    return 8
 }
 
 fun extractBaseMinecraftVersion(version: String?): String {
@@ -292,37 +358,39 @@ fun isLaunchVersionForBase(launchVersion: String?, baseVersion: String): Boolean
 }
 
 fun resolveLaunchVersion(profile: MinecraftProfile?, baseVersion: String): String {
-    var savedVersion = profile?.lastVersionId
-    if (baseVersion == "1.21.1" && savedVersion != null && savedVersion.startsWith("fabric-loader-")) {
-        savedVersion = "fabric-loader-0.16.10-1.21.1"
-    }
-    return if (isLaunchVersionForBase(savedVersion, baseVersion)) savedVersion!! else baseVersion
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val savedVersion = profile?.lastVersionId
+    return if (isLaunchVersionForBase(savedVersion, cleanBase)) savedVersion!! else cleanBase
 }
 
-fun modLoaderLabel(launchVersion: String, baseVersion: String): String = when {
-    launchVersion.startsWith("fabric-loader-") -> "Fabric"
-    launchVersion.startsWith("quilt-loader-") -> "Quilt"
-    launchVersion.startsWith("$baseVersion-forge-") -> "Forge"
-    launchVersion.startsWith("$baseVersion-neoforge-") || launchVersion.startsWith("neoforge-") -> "NeoForge"
-    else -> "Vanilla"
+fun modLoaderLabel(launchVersion: String, baseVersion: String): String {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    return when {
+        launchVersion.startsWith("fabric-loader-") -> "Fabric"
+        launchVersion.startsWith("quilt-loader-") -> "Quilt"
+        launchVersion.startsWith("$cleanBase-forge-") || launchVersion.contains("-forge-") -> "Forge"
+        launchVersion.startsWith("$cleanBase-neoforge-") || launchVersion.startsWith("neoforge-") || launchVersion.contains("-neoforge-") -> "NeoForge"
+        else -> "Vanilla"
+    }
 }
 
 fun isLoaderInstalled(launchVersion: String, baseVersion: String): Boolean {
-    val loader = modLoaderLabel(launchVersion, baseVersion)
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val loader = modLoaderLabel(launchVersion, cleanBase)
     if (loader == "Vanilla") return true
 
     val jsonFile = File(Tools.DIR_HOME_VERSION, "$launchVersion/$launchVersion.json")
     if (!jsonFile.exists() || jsonFile.length() == 0L) return false
 
     if (loader == "Forge") {
-        val loaderVersion = launchVersion.removePrefix("$baseVersion-forge-")
-        val forgeDir = File(Tools.DIR_HOME_LIBRARY, "net/minecraftforge/forge/$baseVersion-$loaderVersion")
+        val loaderVersion = launchVersion.substringAfter("-forge-")
+        val forgeDir = File(Tools.DIR_HOME_LIBRARY, "net/minecraftforge/forge/$cleanBase-$loaderVersion")
         val hasJar = forgeDir.exists() && (forgeDir.listFiles { _, name -> name.endsWith(".jar") }?.isNotEmpty() ?: false)
         if (!hasJar) return false
     }
 
     if (loader == "NeoForge") {
-        val loaderVersion = launchVersion.removePrefix("neoforge-").removePrefix("$baseVersion-neoforge-")
+        val loaderVersion = launchVersion.removePrefix("neoforge-").substringAfter("-neoforge-")
         val neoforgeDir = File(Tools.DIR_HOME_LIBRARY, "net/neoforged/neoforge/$loaderVersion")
         val hasJar = neoforgeDir.exists() && (neoforgeDir.listFiles { _, name -> name.endsWith(".jar") }?.isNotEmpty() ?: false)
         if (!hasJar) return false
@@ -331,7 +399,266 @@ fun isLoaderInstalled(launchVersion: String, baseVersion: String): Boolean {
     return true
 }
 
+suspend fun repairOrQuarantineCorruptedMods(
+    context: Context,
+    modsDir: File,
+    cleanBase: String,
+    normalizedLoader: String,
+    onStatus: (String) -> Unit = {}
+) = withContext(Dispatchers.IO) {
+    val allFiles = modsDir.listFiles() ?: return@withContext
+    val brokenFiles = mutableListOf<Pair<File, String>>()
+
+    for (f in allFiles) {
+        if (!f.isFile) continue
+        val name = f.name
+        if (name.contains(".part.")) {
+            f.delete()
+            continue
+        }
+        if (name.endsWith(".jar", ignoreCase = true)) {
+            val isReplacedCraftTweaker = name.startsWith("CraftTweaker2-1.12-", ignoreCase = true) && f.length() < 500_000L
+            if (isReplacedCraftTweaker || !com.cannon.onyxlauncher.utils.DownloadUtils.isValidZipArchive(f)) {
+                brokenFiles.add(f to name)
+            }
+        }
+    }
+
+    if (brokenFiles.isEmpty()) return@withContext
+
+    val cfKey = try { context.getString(R.string.curseforge_api_key) } catch (_: Exception) { "" }
+    val cfApi = if (cfKey.isNotBlank()) CurseforgeApi(cfKey) else null
+    val mrApi = ModrinthApi()
+
+    for ((brokenFile, origJarName) in brokenFiles) {
+        onStatus(context.getString(R.string.status_repairing_corrupted_mod, origJarName))
+        Log.w("OnyxLauncher", "Detected corrupted mod jar (missing ZIP END header): $origJarName (${brokenFile.length()} bytes)")
+
+        var repaired = false
+        if (origJarName.equals("CraftTweaker2-1.12-4.1.20.687.jar", ignoreCase = true)) {
+            try {
+                val directUrl = "https://edge.forgecdn.net/files/3832/761/CraftTweaker2-1.12-4.1.20.687.jar"
+                val tmpRepair = File(modsDir, "$origJarName.repair.tmp")
+                downloadFileBlocking(directUrl, tmpRepair)
+                if (tmpRepair.length() > 1_000_000L && com.cannon.onyxlauncher.utils.DownloadUtils.isValidZipArchive(tmpRepair)) {
+                    if (brokenFile.exists()) brokenFile.delete()
+                    val targetFile = File(modsDir, origJarName)
+                    if (tmpRepair.renameTo(targetFile)) {
+                        repaired = true
+                        Log.i("OnyxLauncher", "Successfully restored original CraftTweaker2-1.12-4.1.20.687.jar")
+                    }
+                }
+                if (tmpRepair.exists()) tmpRepair.delete()
+            } catch (e: Exception) {
+                Log.w("OnyxLauncher", "Direct CraftTweaker2 restore failed: ${e.message}")
+            }
+        }
+
+        val rawStem = origJarName.removeSuffix(".jar").removeSuffix(".JAR")
+            .replace(Regex("(?i)[-_](neoforge|forge|fabric|quilt).*"), "")
+            .replace(Regex("[-_]v?\\d+\\..*"), "")
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .trim()
+
+        if (!repaired && rawStem.length >= 3) {
+            val filters = SearchFilters().apply {
+                isModpack = false
+                name = rawStem
+                mcVersion = cleanBase
+            }
+            val candidateApis = listOfNotNull(cfApi, mrApi)
+            for (searchApi in candidateApis) {
+                if (repaired) break
+                try {
+                    val searchRes = searchApi.searchMod(filters, null)
+                    val hits = searchRes?.results ?: emptyArray()
+                    for (hit in hits.take(5)) {
+                        val details = searchApi.getModDetails(hit) ?: continue
+                        val exactIdx = details.versionUrls.indices.firstOrNull { idx ->
+                            val url = details.versionUrls[idx]
+                            val vName = details.versionNames.getOrNull(idx).orEmpty()
+                            url.endsWith("/$origJarName", ignoreCase = true) ||
+                                vName.equals(origJarName, ignoreCase = true)
+                        }
+                        val bestIdx = exactIdx ?: -1
+                        if (bestIdx >= 0) {
+                            val downloadUrl = details.versionUrls.getOrNull(bestIdx).orEmpty()
+                            if (downloadUrl.isNotBlank()) {
+                                val tmpRepair = File(modsDir, "$origJarName.repair.tmp")
+                                downloadFileBlocking(downloadUrl, tmpRepair)
+                                if (com.cannon.onyxlauncher.utils.DownloadUtils.isValidZipArchive(tmpRepair)) {
+                                    if (brokenFile.exists()) brokenFile.delete()
+                                    val targetFile = File(modsDir, origJarName)
+                                    if (tmpRepair.renameTo(targetFile)) {
+                                        repaired = true
+                                        Log.i("OnyxLauncher", "Successfully repaired corrupted mod jar: $origJarName from $downloadUrl")
+                                        break
+                                    }
+                                }
+                                if (tmpRepair.exists()) tmpRepair.delete()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("OnyxLauncher", "Repair search failed for $origJarName: ${e.message}")
+                }
+            }
+        }
+
+        if (!repaired && brokenFile.exists()) {
+            val quarantineFile = File(modsDir, "$origJarName.corrupted_zip")
+            if (quarantineFile.exists()) quarantineFile.delete()
+            if (brokenFile.renameTo(quarantineFile)) {
+                Log.w("OnyxLauncher", "Quarantined irreparable corrupted mod jar to ${quarantineFile.name}")
+            } else {
+                brokenFile.delete()
+            }
+        }
+    }
+}
+
+suspend fun ensureMobileOptimizationMods(
+    context: Context,
+    instanceId: String,
+    baseVersion: String,
+    loaderLabel: String,
+    onStatus: (String) -> Unit = {}
+) {
+    val normalizedLoader = loaderLabel.lowercase(Locale.ROOT)
+    if (normalizedLoader !in setOf("forge", "neoforge", "fabric", "quilt")) return
+
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val instanceDir = getInstanceDir(instanceId)
+    val modsDir = File(instanceDir, "mods")
+    if (!modsDir.exists()) modsDir.mkdirs()
+
+    val manifestFile = File(instanceDir, "manifest.json")
+    if (manifestFile.isFile) {
+        withContext(Dispatchers.IO) {
+            try {
+                val cfKey = try { context.getString(R.string.curseforge_api_key) } catch (_: Exception) { "" }
+                if (cfKey.isNotBlank()) {
+                    val cfApi = CurseforgeApi(cfKey)
+                    cfApi.ensureManifestFilesInstalled(instanceDir) { curr, total ->
+                        onStatus(context.getString(R.string.status_downloading_missing_modpack_mods, curr, total))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("OnyxLauncher", "Failed ensuring CurseForge manifest files for $instanceId", e)
+            }
+        }
+    }
+
+    repairOrQuarantineCorruptedMods(context, modsDir, cleanBase, normalizedLoader, onStatus)
+
+    val markerKey = "v1_${cleanBase}_${normalizedLoader}"
+    val markerFile = File(instanceDir, ".onyx_mobile_opt_mods_v1")
+    if (markerFile.isFile) {
+        val saved = try { markerFile.readText().trim() } catch (_: Exception) { "" }
+        if (saved == markerKey) return
+    }
+
+    data class OptModSpec(
+        val projectId: String,
+        val displayName: String,
+        val matchKeywords: List<String>
+    )
+
+    // 100% client-safe, zero-dependency, GL4ES-compatible, multiplayer-compatible FPS/RAM mods
+    val optMods = listOf(
+        OptModSpec("5ZwdcRci", "ImmediatelyFast", listOf("immediatelyfast")),
+        OptModSpec("g96Z4WVZ", "BadOptimizations", listOf("badoptimizations")),
+        OptModSpec("NNAgCjsB", "EntityCulling", listOf("entityculling")),
+        OptModSpec("uXXizFIs", "FerriteCore", listOf("ferritecore", "ferrite-core", "ferrite_core")),
+        OptModSpec("nmDcB62a", "ModernFix", listOf("modernfix"))
+    )
+
+    val existingNames = modsDir.listFiles()?.map { it.name.lowercase(Locale.ROOT) } ?: emptyList()
+
+    withContext(Dispatchers.IO) {
+        val api = ModrinthApi()
+        var installedAny = 0
+        var hadNetworkFailure = false
+
+        for (spec in optMods) {
+            val alreadyPresent = existingNames.any { fileName ->
+                spec.matchKeywords.any { kw -> fileName.contains(kw) }
+            }
+            if (alreadyPresent) continue
+
+            try {
+                onStatus(context.getString(R.string.status_mobile_opt_checking, spec.displayName))
+                val modItem = ModItem(
+                    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_MODRINTH,
+                    false,
+                    spec.projectId,
+                    spec.displayName,
+                    spec.displayName,
+                    ""
+                )
+                val details = api.getModDetails(modItem)
+                if (details == null) {
+                    hadNetworkFailure = true
+                    continue
+                }
+                val versionIndex = chooseBestVersionIndex(
+                    details,
+                    cleanBase,
+                    preferFabric = normalizedLoader == "fabric",
+                    preferForge = normalizedLoader == "forge",
+                    preferNeoForge = normalizedLoader == "neoforge",
+                    preferQuilt = normalizedLoader == "quilt"
+                )
+                if (versionIndex < 0) continue
+
+                // Skip if this specific build unexpectedly declares required external dependencies
+                val reqDeps = details.versionDependencyProjectIds?.getOrNull(versionIndex).orEmpty().trim()
+                if (reqDeps.isNotEmpty()) {
+                    Log.i("OnyxLauncher", "Skipping auto-opt mod ${spec.displayName} for $cleanBase/$normalizedLoader due to required deps: $reqDeps")
+                    continue
+                }
+
+                val downloadUrl = details.versionUrls.getOrNull(versionIndex).orEmpty()
+                if (downloadUrl.isBlank()) continue
+
+                onStatus(context.getString(R.string.status_mobile_opt_downloading, spec.displayName))
+                val fileName = safeDownloadFileName("onyxopt_${spec.displayName}_${details.versionNames[versionIndex]}", cleanBase, ".jar")
+                val destFile = File(modsDir, fileName)
+                downloadFileBlocking(downloadUrl, destFile)
+                if (destFile.exists() && isValidZip(destFile)) {
+                    installedAny++
+                    Log.i("OnyxLauncher", "Auto-installed mobile optimization mod ${spec.displayName} -> ${destFile.name}")
+                } else {
+                    if (destFile.exists()) destFile.delete()
+                }
+            } catch (e: Exception) {
+                hadNetworkFailure = true
+                Log.w("OnyxLauncher", "Could not auto-install ${spec.displayName} for $cleanBase/$normalizedLoader: ${e.message}")
+            }
+        }
+
+        if (!hadNetworkFailure) {
+            try {
+                markerFile.writeText(markerKey)
+            } catch (_: Exception) {
+            }
+        }
+
+        if (installedAny > 0) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(
+                    context,
+                    "Zainstalowano $installedAny mod(y) optymalizacji FPS (ImmediatelyFast / BadOptimizations / EntityCulling)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
+    }
+}
+
 suspend fun ensureFabricLanguageKotlin(context: Context, instanceId: String, baseVersion: String) {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     val modsDir = File(getInstanceDir(instanceId), "mods")
     if (!modsDir.exists()) modsDir.mkdirs()
 
@@ -357,7 +684,7 @@ suspend fun ensureFabricLanguageKotlin(context: Context, instanceId: String, bas
             if (details != null) {
                 val versionIndex = chooseBestVersionIndex(
                     details,
-                    baseVersion,
+                    cleanBase,
                     preferFabric = true,
                     preferForge = false,
                     preferNeoForge = false,
@@ -365,7 +692,7 @@ suspend fun ensureFabricLanguageKotlin(context: Context, instanceId: String, bas
                 )
                 if (versionIndex >= 0 && details.versionUrls[versionIndex].isNotBlank()) {
                     val downloadUrl = details.versionUrls[versionIndex]
-                    val fileName = safeDownloadFileName(details.versionNames[versionIndex], baseVersion, ".jar")
+                    val fileName = safeDownloadFileName(details.versionNames[versionIndex], cleanBase, ".jar")
                     val destFile = File(modsDir, fileName)
                     downloadFileBlocking(downloadUrl, destFile)
                     withContext(Dispatchers.Main) {
@@ -379,7 +706,57 @@ suspend fun ensureFabricLanguageKotlin(context: Context, instanceId: String, bas
     }
 }
 
+suspend fun ensureFabricApi(context: Context, instanceId: String, baseVersion: String) {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val modsDir = File(getInstanceDir(instanceId), "mods")
+    if (!modsDir.exists()) modsDir.mkdirs()
+
+    val apiExists = modsDir.listFiles()?.any {
+        val name = it.name.lowercase(Locale.ROOT)
+        name.contains("fabric-api") || name.contains("fabric_api") || (name.contains("fabric") && name.contains("api") && !name.contains("language"))
+    } ?: false
+
+    if (apiExists) return
+
+    withContext(Dispatchers.IO) {
+        try {
+            val api = ModrinthApi()
+            val modItem = ModItem(
+                com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_MODRINTH,
+                false,
+                "fabric-api",
+                "fabric-api",
+                "Fabric API",
+                ""
+            )
+            val details = api.getModDetails(modItem)
+            if (details != null) {
+                val versionIndex = chooseBestVersionIndex(
+                    details,
+                    cleanBase,
+                    preferFabric = true,
+                    preferForge = false,
+                    preferNeoForge = false,
+                    preferQuilt = false
+                )
+                if (versionIndex >= 0 && details.versionUrls[versionIndex].isNotBlank()) {
+                    val downloadUrl = details.versionUrls[versionIndex]
+                    val fileName = safeDownloadFileName(details.versionNames[versionIndex], cleanBase, ".jar")
+                    val destFile = File(modsDir, fileName)
+                    downloadFileBlocking(downloadUrl, destFile)
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(context, context.getString(R.string.fabric_api_downloaded_for, cleanBase), Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("OnyxLauncher", "Failed to auto-download Fabric API", e)
+        }
+    }
+}
+
 suspend fun ensureSodiumForIris(context: Context, instanceId: String, baseVersion: String) {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     val modsDir = File(getInstanceDir(instanceId), "mods")
     if (!modsDir.exists()) return
 
@@ -403,7 +780,7 @@ suspend fun ensureSodiumForIris(context: Context, instanceId: String, baseVersio
                             } else if (modId == "sodium") {
                                 val versionMatch = Regex("""\"version\"\s*:\s*\"([^\"]+)\"""").find(content)
                                 val versionStr = versionMatch?.groupValues?.get(1).orEmpty()
-                                if (baseVersion == "1.21.1" && (versionStr.startsWith("0.8.") || versionStr.startsWith("0.7.") || versionStr.startsWith("0.6."))) {
+                                if (cleanBase == "1.21.1" && (versionStr.startsWith("0.8.") || versionStr.startsWith("0.7.") || versionStr.startsWith("0.6."))) {
                                     filesToDelete.add(jarFile)
                                 } else {
                                     hasSodium = true
@@ -442,15 +819,15 @@ suspend fun ensureSodiumForIris(context: Context, instanceId: String, baseVersio
                 if (details != null) {
                     var versionIndex = chooseBestVersionIndex(
                         details,
-                        baseVersion,
+                        cleanBase,
                         preferFabric = true,
                         preferForge = false,
                         preferNeoForge = false,
                         preferQuilt = false
                     )
-                    if (modItem.id == "sodium" && baseVersion == "1.21.1") {
+                    if (modItem.id == "sodium" && cleanBase == "1.21.1") {
                         val compatibleIndices = details.versionUrls.indices.filter { idx ->
-                            versionSupportsMinecraft(details, idx, baseVersion) &&
+                            versionSupportsMinecraft(details, idx, cleanBase) &&
                             versionLoaderText(details, idx).contains("fabric") &&
                             details.versionNames[idx].contains("0.5.11")
                         }
@@ -460,7 +837,7 @@ suspend fun ensureSodiumForIris(context: Context, instanceId: String, baseVersio
                     }
                     if (versionIndex >= 0 && details.versionUrls[versionIndex].isNotBlank()) {
                         val downloadUrl = details.versionUrls[versionIndex]
-                        val fileName = safeDownloadFileName(details.versionNames[versionIndex], baseVersion, ".jar")
+                        val fileName = safeDownloadFileName(details.versionNames[versionIndex], cleanBase, ".jar")
                         val destFile = File(modsDir, fileName)
                         downloadFileBlocking(downloadUrl, destFile)
                         withContext(Dispatchers.Main) {
@@ -498,7 +875,9 @@ fun generateFabricLoaderOverrides(instanceId: String) {
                             // Fabric entry
                             val fabricEntry = "    \"$modId\": {\n" +
                                               "      \"-depends\": {\n" +
-                                              "        \"fabricloader\": \"\"\n" +
+                                              "        \"fabricloader\": \"\",\n" +
+                                              "        \"minecraft\": \"\",\n" +
+                                              "        \"java\": \"\"\n" +
                                               "      }\n" +
                                               "    }"
                             fabricEntries.add(fabricEntry)
@@ -510,6 +889,16 @@ fun generateFabricLoaderOverrides(instanceId: String) {
                                                  "        {\n" +
                                                  "          \"remove\": {\n" +
                                                  "            \"id\": \"fabricloader\"\n" +
+                                                 "          }\n" +
+                                                 "        },\n" +
+                                                 "        {\n" +
+                                                 "          \"remove\": {\n" +
+                                                 "            \"id\": \"minecraft\"\n" +
+                                                 "          }\n" +
+                                                 "        },\n" +
+                                                 "        {\n" +
+                                                 "          \"remove\": {\n" +
+                                                 "            \"id\": \"java\"\n" +
                                                  "          }\n" +
                                                  "        }\n" +
                                                  "      ]\n" +
@@ -549,6 +938,171 @@ fun generateFabricLoaderOverrides(instanceId: String) {
     }
 }
 
+fun detectModJarLoaders(jarFile: File): Set<String> {
+    val loaders = mutableSetOf<String>()
+    java.util.zip.ZipFile(jarFile).use { zip ->
+        if (zip.getEntry("quilt.mod.json") != null) {
+            loaders.add("Quilt")
+        }
+        if (zip.getEntry("fabric.mod.json") != null) {
+            loaders.add("Fabric")
+            loaders.add("Quilt")
+        }
+        if (zip.getEntry("META-INF/neoforge.mods.toml") != null) {
+            loaders.add("NeoForge")
+        }
+        val forgeTomlEntry = zip.getEntry("META-INF/mods.toml")
+        if (forgeTomlEntry != null) {
+            val tomlText = zip.getInputStream(forgeTomlEntry).bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val hasNeo = Regex("""modId\s*=\s*["']neoforge["']""", RegexOption.IGNORE_CASE).containsMatchIn(tomlText)
+            val hasForge = Regex("""modId\s*=\s*["']forge["']""", RegexOption.IGNORE_CASE).containsMatchIn(tomlText)
+            when {
+                hasNeo && !hasForge -> loaders.add("NeoForge")
+                hasForge && !hasNeo -> loaders.add("Forge")
+                else -> {
+                    loaders.add("Forge")
+                    loaders.add("NeoForge")
+                }
+            }
+        }
+        if (zip.getEntry("mcmod.info") != null) {
+            loaders.add("Forge")
+        }
+    }
+    return if (loaders.isEmpty()) setOf("Fabric", "Quilt", "Forge", "NeoForge") else loaders
+}
+
+fun isModJarCompatibleWithEngine(jarFile: File, activeLoader: String): Boolean {
+    if (activeLoader == "Vanilla") return false
+    return try {
+        activeLoader in detectModJarLoaders(jarFile)
+    } catch (e: Exception) {
+        Log.w("OnyxLauncher", "Skipping invalid mod jar during engine check: ${jarFile.name}", e)
+        true
+    }
+}
+
+private fun moveModJar(src: File, dst: File) {
+    dst.parentFile?.mkdirs()
+    if (dst.exists()) dst.delete()
+    if (!src.renameTo(dst)) {
+        src.copyTo(dst, overwrite = true)
+        src.delete()
+    }
+}
+
+fun syncInstanceEngineEnvironment(context: Context, instanceId: String, baseVersion: String, targetLoader: String) {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val instanceDir = getInstanceDir(instanceId)
+    if (!instanceDir.exists()) instanceDir.mkdirs()
+
+    val engineFile = File(instanceDir, "engine_info.txt")
+    val previousLoader = if (engineFile.exists()) {
+        try {
+            engineFile.readLines()
+                .firstOrNull { it.startsWith("active_engine=") }
+                ?.substringAfter("active_engine=")
+                ?.trim()
+                ?.ifEmpty { null }
+        } catch (e: Exception) {
+            null
+        }
+    } else null
+
+    val optionsFile = File(instanceDir, "options.txt")
+    if (!optionsFile.exists()) {
+        val defaultOptions = File(Tools.DIR_GAME_HOME, "options.txt")
+        if (defaultOptions.exists() && defaultOptions.length() > 0L) {
+            try {
+                defaultOptions.copyTo(optionsFile, overwrite = false)
+            } catch (e: Exception) {
+                optionsFile.writeText("lang:pl_pl\nautoJump:false\nenableVsync:false\n")
+            }
+        } else {
+            optionsFile.writeText("lang:pl_pl\nautoJump:false\nenableVsync:false\n")
+        }
+    }
+
+    val targetOptionsFile = File(instanceDir, "options_${targetLoader.lowercase(Locale.ROOT)}.txt")
+    if (previousLoader != null && !previousLoader.equals(targetLoader, ignoreCase = true) && optionsFile.exists()) {
+        val prevOptionsFile = File(instanceDir, "options_${previousLoader.lowercase(Locale.ROOT)}.txt")
+        try {
+            optionsFile.copyTo(prevOptionsFile, overwrite = true)
+            if (targetOptionsFile.exists()) {
+                targetOptionsFile.copyTo(optionsFile, overwrite = true)
+            } else {
+                optionsFile.copyTo(targetOptionsFile, overwrite = true)
+            }
+        } catch (e: Exception) {
+            Log.e("OnyxLauncher", "Failed to swap per-engine options.txt", e)
+        }
+    } else if (optionsFile.exists() && !targetOptionsFile.exists()) {
+        try {
+            optionsFile.copyTo(targetOptionsFile, overwrite = true)
+        } catch (e: Exception) {
+            Log.e("OnyxLauncher", "Failed to save initial options snapshot for $targetLoader", e)
+        }
+    }
+
+    val modFormat = when (targetLoader) {
+        "Fabric" -> "fabric.mod.json"
+        "Quilt" -> "quilt.mod.json / fabric.mod.json"
+        "Forge" -> "META-INF/mods.toml"
+        "NeoForge" -> "META-INF/neoforge.mods.toml"
+        else -> "none"
+    }
+    try {
+        engineFile.writeText(
+            buildString {
+                appendLine("active_engine=$targetLoader")
+                appendLine("minecraft_version=$cleanBase")
+                appendLine("required_java=${getTargetJavaVersionForMc(cleanBase, targetLoader)}")
+                appendLine("supports_mods=${targetLoader != "Vanilla"}")
+                appendLine("mod_format=$modFormat")
+                appendLine("options_profile=options_${targetLoader.lowercase(Locale.ROOT)}.txt")
+            }
+        )
+    } catch (e: Exception) {
+        Log.e("OnyxLauncher", "Failed to write engine_info.txt", e)
+    }
+
+    val modsDir = File(instanceDir, "mods")
+    if (!modsDir.exists()) modsDir.mkdirs()
+    val storageRoot = File(instanceDir, "mods_storage")
+
+    modsDir.listFiles { f -> f.isFile && f.name.endsWith(".jar", ignoreCase = true) }?.forEach { jar ->
+        if (!isModJarCompatibleWithEngine(jar, targetLoader)) {
+            val primaryLoader = try {
+                detectModJarLoaders(jar).firstOrNull()?.lowercase(Locale.ROOT) ?: "other"
+            } catch (e: Exception) {
+                "other"
+            }
+            moveModJar(jar, File(storageRoot, "$primaryLoader/${jar.name}"))
+        }
+    }
+
+    if (targetLoader != "Vanilla" && storageRoot.exists()) {
+        storageRoot.listFiles()?.filter { it.isDirectory }?.forEach { loaderStorageDir ->
+            loaderStorageDir.listFiles { f -> f.isFile && f.name.endsWith(".jar", ignoreCase = true) }?.forEach { stashedJar ->
+                if (isModJarCompatibleWithEngine(stashedJar, targetLoader)) {
+                    val destJar = File(modsDir, stashedJar.name)
+                    if (!destJar.exists()) {
+                        moveModJar(stashedJar, destJar)
+                    }
+                }
+            }
+        }
+    }
+
+    val configDir = File(instanceDir, "config")
+    if (targetLoader == "Fabric" || targetLoader == "Quilt") {
+        generateFabricLoaderOverrides(instanceId)
+    } else {
+        File(configDir, "fabric_loader_dependencies.json").takeIf { it.exists() }?.delete()
+        File(configDir, "quilt-loader-overrides.json").takeIf { it.exists() }?.delete()
+    }
+}
+
 fun isValidZip(file: File): Boolean {
 
     if (!file.exists() || file.length() == 0L) return false
@@ -561,19 +1115,21 @@ fun isValidZip(file: File): Boolean {
 }
 
 fun saveInstanceLaunchVersion(instanceId: String, baseVersion: String, launchVersion: String) {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     LauncherProfiles.load()
     val profile = LauncherProfiles.mainProfileJson.profiles[instanceId] ?: MinecraftProfile.getDefaultProfile().also {
         LauncherProfiles.mainProfileJson.profiles[instanceId] = it
     }
-    if (isLaunchVersionForBase(launchVersion, baseVersion)) {
+    if (isLaunchVersionForBase(launchVersion, cleanBase)) {
         profile.lastVersionId = launchVersion
         LauncherProfiles.write()
     }
 }
 
 fun installFabricLoaderForInstance(instanceId: String, baseVersion: String): String {
-    val versions = com.cannon.onyxlauncher.modloaders.FabriclikeUtils.FABRIC_UTILS.downloadLoaderVersions(baseVersion)
-        ?: throw java.io.IOException("Failed to download Fabric list for $baseVersion")
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val versions = com.cannon.onyxlauncher.modloaders.FabriclikeUtils.FABRIC_UTILS.downloadLoaderVersions(cleanBase)
+        ?: throw java.io.IOException("Failed to download Fabric list for $cleanBase")
     val versionComparator = Comparator<com.cannon.onyxlauncher.modloaders.FabricVersion> { a, b ->
         val partsA = a.version.split('-')[0].split('.').map { it.toIntOrNull() ?: 0 }
         val partsB = b.version.split('-')[0].split('.').map { it.toIntOrNull() ?: 0 }
@@ -590,8 +1146,8 @@ fun installFabricLoaderForInstance(instanceId: String, baseVersion: String): Str
     }
     val loaderVersion = versions.toList().filter { it.stable }.maxWithOrNull(versionComparator)
         ?: versions.toList().maxWithOrNull(versionComparator)
-        ?: throw java.io.IOException("No Fabric loader for $baseVersion")
-    val launchVersion = "fabric-loader-${loaderVersion.version}-$baseVersion"
+        ?: throw java.io.IOException("No Fabric loader for $cleanBase")
+    val launchVersion = "fabric-loader-${loaderVersion.version}-$cleanBase"
     val jsonFile = File(Tools.DIR_HOME_VERSION, "$launchVersion/$launchVersion.json")
     if (!jsonFile.canRead()) {
         var installError: Exception? = null
@@ -602,7 +1158,7 @@ fun installFabricLoaderForInstance(instanceId: String, baseVersion: String): Str
             }
 
             override fun onDataNotAvailable() {
-                installError = java.io.IOException("Brak danych Fabric dla $baseVersion")
+                installError = java.io.IOException("Brak danych Fabric dla $cleanBase")
             }
 
             override fun onDownloadError(e: Exception) {
@@ -612,7 +1168,7 @@ fun installFabricLoaderForInstance(instanceId: String, baseVersion: String): Str
         com.cannon.onyxlauncher.modloaders.FabriclikeDownloadTask(
             listener,
             com.cannon.onyxlauncher.modloaders.FabriclikeUtils.FABRIC_UTILS,
-            baseVersion,
+            cleanBase,
             loaderVersion.version,
             false
         ).run()
@@ -621,13 +1177,14 @@ fun installFabricLoaderForInstance(instanceId: String, baseVersion: String): Str
             throw java.io.IOException("Fabric installation did not complete successfully")
         }
     }
-    saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+    saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
     return launchVersion
 }
 
 fun installQuiltLoaderForInstance(instanceId: String, baseVersion: String): String {
-    val versions = com.cannon.onyxlauncher.modloaders.FabriclikeUtils.QUILT_UTILS.downloadLoaderVersions(baseVersion)
-        ?: throw java.io.IOException("Failed to download Quilt list for $baseVersion")
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val versions = com.cannon.onyxlauncher.modloaders.FabriclikeUtils.QUILT_UTILS.downloadLoaderVersions(cleanBase)
+        ?: throw java.io.IOException("Failed to download Quilt list for $cleanBase")
     val versionComparator = Comparator<com.cannon.onyxlauncher.modloaders.FabricVersion> { a, b ->
         val partsA = a.version.split('-')[0].split('.').map { it.toIntOrNull() ?: 0 }
         val partsB = b.version.split('-')[0].split('.').map { it.toIntOrNull() ?: 0 }
@@ -644,8 +1201,8 @@ fun installQuiltLoaderForInstance(instanceId: String, baseVersion: String): Stri
     }
     val loaderVersion = versions.toList().filter { it.stable }.maxWithOrNull(versionComparator)
         ?: versions.toList().maxWithOrNull(versionComparator)
-        ?: throw java.io.IOException("No Quilt loader for $baseVersion")
-    val launchVersion = "quilt-loader-${loaderVersion.version}-$baseVersion"
+        ?: throw java.io.IOException("No Quilt loader for $cleanBase")
+    val launchVersion = "quilt-loader-${loaderVersion.version}-$cleanBase"
     val jsonFile = File(Tools.DIR_HOME_VERSION, "$launchVersion/$launchVersion.json")
     if (!jsonFile.canRead()) {
         var installError: Exception? = null
@@ -656,7 +1213,7 @@ fun installQuiltLoaderForInstance(instanceId: String, baseVersion: String): Stri
             }
 
             override fun onDataNotAvailable() {
-                installError = java.io.IOException("Brak danych Quilt dla $baseVersion")
+                installError = java.io.IOException("Brak danych Quilt dla $cleanBase")
             }
 
             override fun onDownloadError(e: Exception) {
@@ -666,7 +1223,7 @@ fun installQuiltLoaderForInstance(instanceId: String, baseVersion: String): Stri
         com.cannon.onyxlauncher.modloaders.FabriclikeDownloadTask(
             listener,
             com.cannon.onyxlauncher.modloaders.FabriclikeUtils.QUILT_UTILS,
-            baseVersion,
+            cleanBase,
             loaderVersion.version,
             false
         ).run()
@@ -675,72 +1232,90 @@ fun installQuiltLoaderForInstance(instanceId: String, baseVersion: String): Stri
             throw java.io.IOException("Quilt installation did not complete successfully")
         }
     }
-    saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+    saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
     return launchVersion
 }
 
 fun downloadNeoForgeVersions(): List<String>? {
-    return try {
-        val url = java.net.URL("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
-        val xml = url.readText()
-        val regex = "<version>([^<]+)</version>".toRegex()
-        regex.findAll(xml).map { it.groupValues[1] }.toList()
-    } catch (e: Exception) {
-        android.util.Log.e("OnyxLauncher", "Failed to download NeoForge versions", e)
-        null
+    val metadataUrl = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+    // Keep this on DownloadUtils rather than URL.readText()/HttpURLConnection directly.
+    // Besides setting the launcher User-Agent, it rejects HTTP error pages and follows
+    // Maven redirects consistently with the rest of the launcher downloads.
+    repeat(3) { attempt ->
+        try {
+            val xml = com.cannon.onyxlauncher.utils.DownloadUtils.downloadString(metadataUrl)
+            val regex = "<version>([^<]+)</version>".toRegex()
+            val versions = regex.findAll(xml).map { it.groupValues[1] }.toList()
+            if (versions.isNotEmpty()) return versions
+        } catch (e: Exception) {
+            android.util.Log.w("OnyxLauncher", "NeoForge version list attempt ${attempt + 1} failed: ${e.message}")
+        }
     }
+    android.util.Log.e("OnyxLauncher", "Failed to download NeoForge versions after 3 attempts")
+    return null
 }
 
-fun prepareNeoForgeLoaderForInstance(instanceId: String, baseVersion: String): ForgeLoaderPreparation {
+fun prepareNeoForgeLoaderForInstance(
+    instanceId: String,
+    baseVersion: String,
+    requestedVersion: String? = null
+): ForgeLoaderPreparation {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     val neoforgeVersions = downloadNeoForgeVersions()
         ?: throw java.io.IOException("Failed to download NeoForge version")
-    val parts = baseVersion.split('.')
+    val parts = cleanBase.split('.')
     val major = parts.getOrNull(1) ?: "20"
     val minor = parts.getOrNull(2) ?: "0"
-    val prefix = if (baseVersion == "1.21") "21.0." else "$major.$minor."
+    val prefix = if (cleanBase == "1.20.1") "47.1." else if (cleanBase == "1.21") "21.0." else "$major.$minor."
 
-    val fullNeoForgeVersion = neoforgeVersions
-        .filter { it.startsWith(prefix) }
-        .lastOrNull()
-        ?: throw java.io.IOException("No NeoForge for Minecraft $baseVersion")
+    val compatibleVersions = neoforgeVersions
+        .filter { it.startsWith(prefix) || (cleanBase == "1.20.1" && (it.startsWith("47.1.") || it.startsWith("20.1."))) }
+    // Modpack manifests pin a loader build.  Installing the newest compatible
+    // NeoForge silently breaks packs whose mods depend on an older build.
+    val fullNeoForgeVersion = requestedVersion
+        ?.removePrefix("neoforge-")
+        ?.takeIf { it in compatibleVersions }
+        ?: compatibleVersions.lastOrNull()
+        ?: throw java.io.IOException("No NeoForge for Minecraft $cleanBase")
 
     val launchVersion = "neoforge-$fullNeoForgeVersion"
     val jsonFile = File(Tools.DIR_HOME_VERSION, "$launchVersion/$launchVersion.json")
     if (jsonFile.canRead()) {
-        saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+        saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
         return ForgeLoaderPreparation(launchVersion, null)
     }
 
-    val installerFile = File(Tools.DIR_CACHE, safeDownloadFileName("neoforge-$fullNeoForgeVersion-installer", baseVersion, ".jar"))
+    val installerFile = File(Tools.DIR_CACHE, safeDownloadFileName("neoforge-$fullNeoForgeVersion-installer", cleanBase, ".jar"))
     if (!installerFile.canRead()) {
         downloadFileBlocking("https://maven.neoforged.net/releases/net/neoforged/neoforge/$fullNeoForgeVersion/neoforge-$fullNeoForgeVersion-installer.jar", installerFile)
     }
-    saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+    saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
     return ForgeLoaderPreparation(launchVersion, installerFile)
 }
 
 data class ForgeLoaderPreparation(val launchVersion: String, val installerFile: File?)
 
 fun prepareForgeLoaderForInstance(instanceId: String, baseVersion: String): ForgeLoaderPreparation {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     val forgeVersions = com.cannon.onyxlauncher.modloaders.ForgeUtils.downloadForgeVersions()
-        ?: throw java.io.IOException("Failed to download Forge list for $baseVersion")
+        ?: throw java.io.IOException("Failed to download Forge list for $cleanBase")
     val fullForgeVersion = forgeVersions
-        .filter { it.startsWith("$baseVersion-") }
+        .filter { it.startsWith("$cleanBase-") }
         .lastOrNull()
-        ?: throw java.io.IOException("No Forge for Minecraft $baseVersion")
-    val loaderVersion = fullForgeVersion.removePrefix("$baseVersion-")
-    val launchVersion = "$baseVersion-forge-$loaderVersion"
+        ?: throw java.io.IOException("No Forge for Minecraft $cleanBase")
+    val loaderVersion = fullForgeVersion.removePrefix("$cleanBase-")
+    val launchVersion = "$cleanBase-forge-$loaderVersion"
     val jsonFile = File(Tools.DIR_HOME_VERSION, "$launchVersion/$launchVersion.json")
     if (jsonFile.canRead()) {
-        saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+        saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
         return ForgeLoaderPreparation(launchVersion, null)
     }
 
-    val installerFile = File(Tools.DIR_CACHE, safeDownloadFileName("forge-$fullForgeVersion-installer", baseVersion, ".jar"))
+    val installerFile = File(Tools.DIR_CACHE, safeDownloadFileName("forge-$fullForgeVersion-installer", cleanBase, ".jar"))
     if (!installerFile.canRead()) {
         downloadFileBlocking(com.cannon.onyxlauncher.modloaders.ForgeUtils.getInstallerUrl(fullForgeVersion), installerFile)
     }
-    saveInstanceLaunchVersion(instanceId, baseVersion, launchVersion)
+    saveInstanceLaunchVersion(instanceId, cleanBase, launchVersion)
     return ForgeLoaderPreparation(launchVersion, installerFile)
 }
 
@@ -752,54 +1327,65 @@ fun chooseBestVersionIndex(
     preferNeoForge: Boolean = false,
     preferQuilt: Boolean = false
 ): Int {
-    val compatible = detail.versionUrls.indices.filter { versionSupportsMinecraft(detail, it, baseVersion) }
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
+    val compatible = detail.versionUrls.indices.filter { versionSupportsMinecraft(detail, it, cleanBase) }
+    val knownModLoaders = setOf("fabric", "quilt", "forge", "neoforge")
+    val hasModLoaderMetadata = detail.versionLoaders?.any { raw ->
+        raw.split(Regex("[,\\s/]+"))
+            .any { it.trim().lowercase(Locale.ROOT) in knownModLoaders }
+    } == true
+
+    if (hasModLoaderMetadata && compatible.isEmpty()) return -1
     val candidates = if (compatible.isNotEmpty()) compatible else detail.versionUrls.indices.toList()
     if (candidates.isEmpty()) return -1
+
     if (preferNeoForge) {
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            loader.contains("neoforge")
-        }?.let { return it }
+        return candidates.firstOrNull { "neoforge" in versionLoaderSet(detail, it) }
+            ?: if (hasModLoaderMetadata) -1 else candidates.first()
     }
     if (preferForge) {
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            loader.contains("forge") && !loader.contains("neoforge")
-        }?.let { return it }
+        return candidates.firstOrNull { "forge" in versionLoaderSet(detail, it) }
+            ?: if (hasModLoaderMetadata) -1 else candidates.first()
     }
     if (preferQuilt) {
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            loader.contains("quilt")
-        }?.let { return it }
+        candidates.firstOrNull { "quilt" in versionLoaderSet(detail, it) }?.let { return it }
         // Quilt is compatible with Fabric mods - fall back to Fabric if no Quilt version
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            loader.contains("fabric") && !loader.contains("forge") && !loader.contains("neoforge")
-        }?.let { return it }
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            !loader.contains("forge") && !loader.contains("neoforge")
-        }?.let { return it }
+        candidates.firstOrNull { "fabric" in versionLoaderSet(detail, it) }?.let { return it }
+        return if (hasModLoaderMetadata) -1 else candidates.first()
     }
     if (preferFabric) {
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            loader.contains("fabric") && !loader.contains("forge") && !loader.contains("neoforge")
-        }?.let { return it }
-        candidates.firstOrNull {
-            val loader = versionLoaderText(detail, it)
-            !loader.contains("forge") && !loader.contains("neoforge")
-        }?.let { return it }
+        candidates.firstOrNull { "fabric" in versionLoaderSet(detail, it) }?.let { return it }
+        return if (hasModLoaderMetadata) -1 else candidates.first()
     }
     return candidates.first()
 }
 
 fun versionSupportsMinecraft(detail: ModDetail, index: Int, baseVersion: String): Boolean {
+    val cleanBase = extractBaseMinecraftVersion(baseVersion)
     val versions = detail.mcVersionNames.getOrNull(index).orEmpty()
     return versions.split(",")
         .map { it.trim() }
-        .any { it == baseVersion }
+        .filter { it.isNotEmpty() }
+        .any { ver ->
+            ver == cleanBase ||
+                (ver.endsWith(".x", ignoreCase = true) && cleanBase.startsWith(ver.dropLast(1)))
+        }
+}
+
+fun versionLoaderSet(detail: ModDetail, index: Int): Set<String> {
+    val rawLoader = detail.versionLoaders?.getOrNull(index).orEmpty().lowercase(Locale.ROOT)
+    val tokens = rawLoader.split(Regex("[,\\s/]+"))
+        .map { it.trim() }
+        .filter { it in setOf("fabric", "quilt", "forge", "neoforge") }
+        .toMutableSet()
+    if (tokens.isEmpty()) {
+        val name = detail.versionNames.getOrNull(index).orEmpty().lowercase(Locale.ROOT)
+        if (Regex("\\bneoforge\\b").containsMatchIn(name)) tokens.add("neoforge")
+        if (Regex("\\bforge\\b").containsMatchIn(name)) tokens.add("forge")
+        if (Regex("\\bfabric\\b").containsMatchIn(name)) tokens.add("fabric")
+        if (Regex("\\bquilt\\b").containsMatchIn(name)) tokens.add("quilt")
+    }
+    return tokens
 }
 
 fun versionLoaderText(detail: ModDetail, index: Int): String {
@@ -844,12 +1430,16 @@ fun getRequiredJavaVersion(versionId: String): Int {
 fun runtimeForRequirement(runtimeName: String, requiredJavaVersion: Int?): String {
     if (requiredJavaVersion == null) return runtimeName
     val major = runtimeMajorVersion(runtimeName)
+    if (requiredJavaVersion <= 8) {
+        if (major != null && major == 8) return runtimeName
+        return NewJREUtil.getRecommendedInternalRuntimeName(8)
+    }
     if (major != null && major >= requiredJavaVersion) return runtimeName
     return NewJREUtil.getRecommendedInternalRuntimeName(requiredJavaVersion)
 }
 
 suspend fun ensureJreForInstaller(context: android.content.Context, file: java.io.File, targetJavaVersion: Int = 8) {
-    val activity = context as? android.app.Activity ?: return
+    val activity = context.findActivity() ?: return
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         var requiredJarJava = com.cannon.onyxlauncher.JavaGUILauncherActivity.getJavaVersion(file)
         if (targetJavaVersion > requiredJarJava) {
@@ -1167,6 +1757,7 @@ fun MainApp(startScreen: String) {
                             onLaunch = { versionId ->
                                 val intent = Intent(context, MainActivity::class.java)
                                 intent.putExtra(MainActivity.INTENT_MINECRAFT_VERSION, versionId)
+                                intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                                 context.startActivity(intent)
                             }, 
                             onShowLogs = { currentScreen = "CrashLogs" },
@@ -1175,6 +1766,11 @@ fun MainApp(startScreen: String) {
                                 myInstances = myInstances.filter { it.id != instance.id }
                                 saveInstances(sharedPrefs, myInstances)
                                 currentScreen = "Home" 
+                            },
+                            onInstanceUpdated = { updated ->
+                                myInstances = myInstances.map { if (it.id == updated.id) updated else it }
+                                activeInstance = updated
+                                saveInstances(sharedPrefs, myInstances)
                             }
                         )
                     }
@@ -1989,7 +2585,7 @@ fun CustomModpackLayout(
                 } catch (e: Exception) {
                     Log.e("OnyxLauncher", "Error analyzing custom modpack", e)
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "Błąd analizy: ${e.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, context.getString(R.string.custom_modpack_analyze_error, e.message ?: ""), Toast.LENGTH_LONG).show()
                     }
                 } finally {
                     withContext(Dispatchers.Main) {
@@ -2038,7 +2634,7 @@ fun CustomModpackLayout(
                 Spacer(modifier = Modifier.height(24.dp))
                 CircularProgressIndicator(color = AccentColor)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(text = "Analizowanie pliku paczki...", color = TextSecondary, fontSize = 12.sp)
+                Text(text = stringResource(R.string.custom_modpack_analyzing), color = TextSecondary, fontSize = 12.sp)
             } else if (analyzedPack != null) {
                 val pack = analyzedPack!!
                 Spacer(modifier = Modifier.height(16.dp))
@@ -2052,11 +2648,11 @@ fun CustomModpackLayout(
                         .background(BgDark)
                         .padding(12.dp)
                 ) {
-                    Text(text = "Format: ${pack.type.uppercase(Locale.ROOT)}", color = AccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(text = stringResource(R.string.custom_modpack_format_label, pack.type.uppercase(Locale.ROOT)), color = AccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = "Minecraft: ${pack.mcVersion}", color = TextPrimary, fontSize = 13.sp)
-                    Text(text = "Silnik: ${pack.loaderName}", color = TextPrimary, fontSize = 13.sp)
-                    Text(text = "Plików w paczce: ${pack.fileCount}", color = TextSecondary, fontSize = 12.sp)
+                    Text(text = stringResource(R.string.custom_modpack_mc_label, pack.mcVersion), color = TextPrimary, fontSize = 13.sp)
+                    Text(text = stringResource(R.string.custom_modpack_engine_label, pack.loaderName), color = TextPrimary, fontSize = 13.sp)
+                    Text(text = stringResource(R.string.custom_modpack_files_count, pack.fileCount), color = TextSecondary, fontSize = 12.sp)
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -2064,7 +2660,7 @@ fun CustomModpackLayout(
                 OutlinedTextField(
                     value = customInstanceName,
                     onValueChange = { customInstanceName = it },
-                    label = { Text("Nazwa nowej instancji") },
+                    label = { Text(stringResource(R.string.custom_modpack_new_instance_name)) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = TextPrimary, unfocusedTextColor = TextPrimary)
                 )
@@ -2137,9 +2733,11 @@ fun CustomModpackLayout(
                                         profile.gameDir = "./custom_instances/$finalDirName"
                                         profile.name = rawName
                                         profile.lastVersionId = modLoader.versionId
-                                        profile.pojavRendererName = "vulkan_zink"
-                                        profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + "Internal-21"
-                                        profile.ramAllocation = Math.max(3072, Math.min(4096, LauncherPreferences.PREF_RAM_ALLOCATION + 1024))
+                                        profile.pojavRendererName = "opengles2"
+                                        profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + NewJREUtil.getRecommendedInternalRuntimeName(getRequiredJavaVersion(modLoader.minecraftVersion))
+                                        profile.resolutionScale = 50
+                                        profile.forceVsync = false
+                                        profile.ramAllocation = recommendedModpackRamMb(context)
 
                                         com.cannon.onyxlauncher.value.launcherprofiles.LauncherProfiles.mainProfileJson.profiles.put(finalDirName, profile)
                                         com.cannon.onyxlauncher.value.launcherprofiles.LauncherProfiles.write()
@@ -2155,14 +2753,14 @@ fun CustomModpackLayout(
                                             onModpackInstalled(rawName, modLoader.versionId, finalDirName)
                                         }
                                     } else {
-                                        throw IOException("Nie udało się utworzyć profilu dla paczki")
+                                        throw IOException(context.getString(R.string.custom_modpack_profile_create_failed))
                                     }
                                 } catch (e: Exception) {
                                     Log.e("OnyxLauncher", "Custom modpack install failed", e)
                                     withContext(Dispatchers.Main) {
                                         installProgress = null
                                         installStatusText = ""
-                                        Toast.makeText(context, "Błąd instalacji: ${e.message}", Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, context.getString(R.string.install_error_msg, e.message ?: ""), Toast.LENGTH_LONG).show()
                                     }
                                 }
                             }
@@ -2406,7 +3004,8 @@ fun InstanceDetailsScreen(
     onLaunch: (String) -> Unit,
     onShowLogs: () -> Unit,
     onShowSettings: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onInstanceUpdated: (InstanceData) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2459,6 +3058,81 @@ fun InstanceDetailsScreen(
     // Tab 0 (Wersja) states
     var versionDetails by remember { mutableStateOf<VersionDetails?>(null) }
     var totalSizeOccupied by remember { mutableStateOf(0L) }
+
+    // Modpack versions / update states
+    val instanceDirForMeta = remember(instance.id) { getInstanceDir(instance.id) }
+    val isModpackInstance = remember(instance.id, profile.gameDir, refreshTrigger) {
+        (profile.gameDir?.contains("custom_instances/") == true) ||
+            File(instanceDirForMeta, ModpackInstaller.MODPACK_META_FILENAME).isFile
+    }
+    var modpackMeta by remember(instance.id, refreshTrigger) { mutableStateOf<ModpackInstaller.ModpackMeta?>(null) }
+    var modpackDetail by remember(instance.id) { mutableStateOf<ModDetail?>(null) }
+    var installedVersionIndex by remember(instance.id, refreshTrigger) { mutableStateOf(-1) }
+    var isLoadingModpackVersions by remember { mutableStateOf(false) }
+    var showModpackVersionsDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(instance.id, isModpackInstance, refreshTrigger) {
+        if (!isModpackInstance) return@LaunchedEffect
+        isLoadingModpackVersions = true
+        withContext(Dispatchers.IO) {
+            try {
+                var meta = ModpackInstaller.readModpackMeta(instanceDirForMeta)
+                withContext(Dispatchers.Main) { modpackMeta = meta }
+
+                val api = CommonApi(context.getString(R.string.curseforge_api_key))
+                var loadedDetail: ModDetail? = null
+                var matchedIdx = -1
+                if (meta != null && !meta.projectId.isNullOrBlank()) {
+                    val item = ModItem(meta.apiSource, true, meta.projectId, meta.title ?: instance.name, "", meta.imageUrl ?: "")
+                    loadedDetail = api.getModDetails(item)
+                    matchedIdx = resolveInstalledModpackVersionIndex(loadedDetail, meta, instanceDirForMeta.name)
+                } else {
+                    val cleanTitle = instance.name.replace(Regex("\\s*\\(\\d+\\)$"), "").trim()
+                    val dirLower = instanceDirForMeta.name.lowercase(Locale.ROOT)
+                    val searchRes = api.searchMod(SearchFilters().apply {
+                        name = cleanTitle
+                        isModpack = true
+                        projectType = "modpack"
+                    })
+                    val candidates = searchRes?.results?.sortedByDescending { item ->
+                        val t = (item.title ?: "").lowercase(Locale.ROOT)
+                        val sanitized = t.replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                        when {
+                            t == cleanTitle.lowercase(Locale.ROOT) -> 3
+                            sanitized.isNotEmpty() && dirLower.startsWith(sanitized) -> 2
+                            t.contains(cleanTitle.lowercase(Locale.ROOT)) -> 1
+                            else -> 0
+                        }
+                    }?.take(10) ?: emptyList()
+
+                    for (candidate in candidates) {
+                        val candidateDetail = api.getModDetails(candidate) ?: continue
+                        val idx = resolveInstalledModpackVersionIndex(candidateDetail, null, instanceDirForMeta.name)
+                        if (idx >= 0) {
+                            loadedDetail = candidateDetail
+                            matchedIdx = idx
+                            break
+                        }
+                    }
+                    if (loadedDetail != null && matchedIdx >= 0) {
+                        ModpackInstaller.writeModpackMeta(instanceDirForMeta, loadedDetail, matchedIdx)
+                        meta = ModpackInstaller.readModpackMeta(instanceDirForMeta)
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    modpackMeta = meta
+                    modpackDetail = loadedDetail
+                    installedVersionIndex = matchedIdx
+                }
+            } catch (e: Exception) {
+                Log.e("OnyxLauncher", "Error loading modpack versions", e)
+            } finally {
+                withContext(Dispatchers.Main) {
+                    isLoadingModpackVersions = false
+                }
+            }
+        }
+    }
     
     // Tab 1 (Mody) states
     var modSubTab by remember { mutableStateOf(0) } // 0 = Zainstalowane, 1 = Nie zainstalowane
@@ -2491,6 +3165,16 @@ fun InstanceDetailsScreen(
         if (!pFolder.exists()) pFolder.mkdirs()
 
         scope.launch(Dispatchers.IO) {
+            LauncherProfiles.load()
+            val currentProfile = LauncherProfiles.mainProfileJson.profiles[instance.id]
+            val currentLaunch = resolveLaunchVersion(currentProfile, instance.mcVersion)
+            val currentLoader = modLoaderLabel(currentLaunch, instance.mcVersion)
+            try {
+                syncInstanceEngineEnvironment(context, instance.id, instance.mcVersion, currentLoader)
+            } catch (e: Exception) {
+                Log.e("OnyxLauncher", "Failed to sync engine environment on refresh", e)
+            }
+
             val validMods = modsFolder.listFiles { f -> f.isFile && f.name.endsWith(".jar", ignoreCase = true) }
                 ?.filter { isValidZip(it) } ?: emptyList()
 
@@ -2528,6 +3212,7 @@ fun InstanceDetailsScreen(
                     if (destinationFolder != null) {
                         if (!destinationFolder.exists()) destinationFolder.mkdirs()
                         var importedCount = 0
+                        val importedFiles = mutableListOf<File>()
                         for ((index, uri) in uris.withIndex()) {
                             val displayName = (Tools.getFileName(context, uri) ?: "").trim().ifEmpty {
                                 "file_${System.currentTimeMillis()}_$index"
@@ -2538,23 +3223,49 @@ fun InstanceDetailsScreen(
                                     input.copyTo(output)
                                 }
                             }
+                            importedFiles.add(destFile)
                             importedCount++
                         }
+                        var compatibilityWarning: String? = null
                         if (activeTab == 1) {
+                            LauncherProfiles.load()
+                            val currentP = LauncherProfiles.mainProfileJson.profiles[instance.id]
+                            val currentLaunch = resolveLaunchVersion(currentP, instance.mcVersion)
+                            val activeLoader = modLoaderLabel(currentLaunch, instance.mcVersion)
+
+                            if (activeLoader == "Vanilla") {
+                                val detected = importedFiles
+                                    .filter { it.name.endsWith(".jar", ignoreCase = true) }
+                                    .flatMap { try { detectModJarLoaders(it) } catch (e: Exception) { emptySet() } }
+                                    .distinct()
+                                if (detected.isNotEmpty()) {
+                                    compatibilityWarning = context.getString(R.string.import_mod_vanilla_warning, detected.first())
+                                }
+                            } else {
+                                val incompatible = importedFiles.filter {
+                                    it.name.endsWith(".jar", ignoreCase = true) && !isModJarCompatibleWithEngine(it, activeLoader)
+                                }
+                                if (incompatible.isNotEmpty()) {
+                                    val detected = incompatible.flatMap {
+                                        try { detectModJarLoaders(it) } catch (e: Exception) { emptySet() }
+                                    }.distinct().joinToString("/")
+                                    compatibilityWarning = context.getString(R.string.import_mod_wrong_engine_warning, detected, activeLoader)
+                                }
+                            }
                             try {
-                                generateFabricLoaderOverrides(instance.id)
+                                syncInstanceEngineEnvironment(context, instance.id, instance.mcVersion, activeLoader)
                             } catch (e: Exception) {
-                                Log.e("OnyxLauncher", "Error generating loader overrides", e)
+                                Log.e("OnyxLauncher", "Error syncing engine environment after import", e)
                             }
                         }
                         withContext(Dispatchers.Main) {
-                            val message = if (importedCount == 1) {
+                            val message = compatibilityWarning ?: if (importedCount == 1) {
                                 val singleName = Tools.getFileName(context, uris.first()) ?: "plik"
                                 context.getString(R.string.import_file_success, singleName)
                             } else {
                                 context.getString(R.string.import_multiple_files_success, importedCount)
                             }
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, message, if (compatibilityWarning != null) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
                             refreshLists()
                         }
                     }
@@ -2807,6 +3518,54 @@ fun InstanceDetailsScreen(
                 Column {
                     Text(text = instance.name, color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                     Text(text = "Minecraft ${instance.mcVersion}", color = TextSecondary, fontSize = 14.sp)
+                    if (isModpackInstance) {
+                        val hasNewerVersion = modpackDetail != null && installedVersionIndex > 0
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            color = if (hasNewerVersion) Color(0xFF0D3B2E) else CardBg,
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, if (hasNewerVersion) Color(0xFF10B981) else StrokeColor),
+                            modifier = Modifier.clickable { showModpackVersionsDialog = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = modpackMeta?.installedVersionName?.let {
+                                        stringResource(R.string.modpack_versions_chip_format, extractCleanPackVersion(it, modpackMeta?.installedMcVersion) ?: it)
+                                    } ?: stringResource(R.string.modpack_show_all_versions),
+                                    color = if (hasNewerVersion) Color(0xFF6EE7B7) else AccentColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (hasNewerVersion) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Surface(
+                                        color = Color(0xFF059669),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text(
+                                            text = stringResource(R.string.modpack_new_version_badge),
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                } else if (isLoadingModpackVersions) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp,
+                                        color = AccentColor
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
             IconButton(onClick = onDelete) { 
@@ -3109,7 +3868,7 @@ fun InstanceDetailsScreen(
                                 LazyColumn(modifier = Modifier.fillMaxSize()) {
                                     items(installedPacks) { file ->
                                         val metadata = remember(file.name, packType) {
-                                            getPackMetadata(file, packType == 1)
+                                            getPackMetadata(file, packType == 1, context)
                                         }
                                         Surface(
                                             modifier = Modifier.fillMaxWidth().clickable {
@@ -3251,6 +4010,22 @@ fun InstanceDetailsScreen(
                         Toast.makeText(context, context.getString(R.string.error_missing_activity_context), Toast.LENGTH_SHORT).show()
                         return@Button
                     }
+                    if (isGameProcessRunning(context)) {
+                        val runningProfileId = LauncherPreferences.DEFAULT_PREF.getString(LauncherPreferences.PREF_KEY_CURRENT_PROFILE, "")
+                        if (runningProfileId == instance.id) {
+                            LauncherProfiles.load()
+                            val activeProfile = LauncherProfiles.mainProfileJson.profiles.get(instance.id) ?: profile
+                            val resumeVersion = resolveLaunchVersion(activeProfile, instance.mcVersion)
+                            val resumeIntent = Intent(context, MainActivity::class.java).apply {
+                                putExtra(MainActivity.INTENT_MINECRAFT_VERSION, resumeVersion)
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                            }
+                            context.startActivity(resumeIntent)
+                            return@Button
+                        } else {
+                            killGameProcessIfRunning(context)
+                        }
+                    }
                     val downloadListener = object : com.cannon.onyxlauncher.progresskeeper.ProgressListener {
                         override fun onProgressStarted() {
                             downloadState = DownloadState(isDownloading = true, fileName = "Rozpoczynanie pobierania...", progress = 0f)
@@ -3304,7 +4079,7 @@ fun InstanceDetailsScreen(
                                 selectedJavaVersion = runtimeToInstall
                                 selectedJavaInstalled = Tools.isRuntimeInstalled(runtimeToInstall)
                                 ready = versionFilesInstalled && selectedJavaInstalled
-                                Toast.makeText(context, "$runtimeToInstall zainstalowana dla tej wersji.", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.runtime_installed_for_version, runtimeToInstall), Toast.LENGTH_SHORT).show()
                             }
                         }
                         return@Button
@@ -3349,16 +4124,21 @@ fun InstanceDetailsScreen(
                                 val launchVersionToSave = resolveLaunchVersion(profile, instance.mcVersion)
                                 profile.name = instance.name
                                 profile.lastVersionId = launchVersionToSave
-                                if (selectedJavaVersion.isNotEmpty()) {
-                                    // Verify the selected JRE is actually installed before committing it
-                                    val jreToUse = if (Tools.isRuntimeInstalled(selectedJavaVersion)) {
-                                        selectedJavaVersion
-                                    } else {
-                                        // JRE not installed — fall back to Internal-21 which is stable
-                                        Log.w("OnyxLauncher", "JRE $selectedJavaVersion not installed, falling back to Internal-21")
-                                        "Internal-21"
+                                val desiredJre = runtimeForRequirement(
+                                    selectedJavaVersion.ifEmpty { Tools.getConfiguredRuntime(profile) },
+                                    requiredJavaVersion ?: getRequiredJavaVersion(instance.mcVersion)
+                                )
+                                val jreToUse = if (Tools.isRuntimeInstalled(desiredJre)) {
+                                    desiredJre
+                                } else {
+                                    try {
+                                        NewJREUtil.installInternalRuntime(activity, desiredJre)
+                                    } catch (e: Exception) {
+                                        Log.e("OnyxLauncher", "Failed auto-installing JRE $desiredJre", e)
                                     }
-                                    profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + jreToUse
+                                    if (Tools.isRuntimeInstalled(desiredJre)) desiredJre else "Internal-21"
+                                }
+                                profile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX + jreToUse
                                     /* if ("vulkan_zink" == profile.pojavRendererName) {
                                         val glInfo = com.cannon.onyxlauncher.utils.GLInfoUtils.getGlInfo()
                                         if (glInfo != null && glInfo.renderer != null && (
@@ -3370,7 +4150,6 @@ fun InstanceDetailsScreen(
                                             profile.pojavRendererName = "opengles2"
                                         }
                                     } */
-                                }
 
                                 if (profile.ramAllocation == null) {
                                     profile.ramAllocation = LauncherPreferences.PREF_RAM_ALLOCATION
@@ -3384,16 +4163,39 @@ fun InstanceDetailsScreen(
                                 if (profile.forceVsync == null) {
                                     profile.forceVsync = LauncherPreferences.PREF_FORCE_VSYNC
                                 }
+                                optimizeHeavyModpackProfile(context, profile, getInstanceDir(instance.id))
                                 
                                 LauncherPreferences.DEFAULT_PREF.edit()
                                     .putString(LauncherPreferences.PREF_KEY_CURRENT_PROFILE, instance.id)
                                     .commit()
                                     
-                                if (modLoaderLabel(launchVersionToSave, instance.mcVersion) != "Vanilla") {
+                                val currentLoader = modLoaderLabel(launchVersionToSave, instance.mcVersion)
+                                try {
+                                    syncInstanceEngineEnvironment(context, instance.id, instance.mcVersion, currentLoader)
+                                } catch (e: Exception) {
+                                    Log.e("OnyxLauncher", "Failed to sync engine environment during launch", e)
+                                }
+                                if (currentLoader != "Vanilla") {
+                                    try {
+                                        ensureMobileOptimizationMods(context, instance.id, instance.mcVersion, currentLoader) { statusMsg ->
+                                            activity.runOnUiThread {
+                                                downloadState = downloadState.copy(isDownloading = true, fileName = statusMsg)
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("OnyxLauncher", "Failed to auto-download mobile optimization mods during launch", e)
+                                    }
+                                }
+                                if (currentLoader == "Fabric" || currentLoader == "Quilt") {
                                     try {
                                         ensureFabricLanguageKotlin(context, instance.id, instance.mcVersion)
                                     } catch (e: Exception) {
                                         Log.e("OnyxLauncher", "Failed to auto-download Fabric Language Kotlin during launch", e)
+                                    }
+                                    try {
+                                        ensureFabricApi(context, instance.id, instance.mcVersion)
+                                    } catch (e: Exception) {
+                                        Log.e("OnyxLauncher", "Failed to auto-download Fabric API during launch", e)
                                     }
                                     try {
                                         ensureSodiumForIris(context, instance.id, instance.mcVersion)
@@ -3503,7 +4305,11 @@ fun InstanceDetailsScreen(
                                             installerFile = prep.installerFile
                                         }
                                         "NeoForge" -> {
-                                            val prep = prepareNeoForgeLoaderForInstance(instance.id, instance.mcVersion)
+                                            val prep = prepareNeoForgeLoaderForInstance(
+                                                instance.id,
+                                                instance.mcVersion,
+                                                launchVersionForStart.removePrefix("neoforge-")
+                                            )
                                             targetLaunchVersion = prep.launchVersion
                                             installerFile = prep.installerFile
                                         }
@@ -3513,26 +4319,18 @@ fun InstanceDetailsScreen(
 
                                 installerFile?.let { file ->
                                     val targetMcJava = try {
-                                        com.cannon.onyxlauncher.Tools.getVersionInfo(instance.mcVersion)?.javaVersion?.majorVersion ?: 8
+                                        com.cannon.onyxlauncher.Tools.getVersionInfo(instance.mcVersion)?.javaVersion?.majorVersion ?: getTargetJavaVersionForMc(instance.mcVersion, loader)
                                     } catch (e: Exception) {
-                                        8
+                                        getTargetJavaVersionForMc(instance.mcVersion, loader)
                                     }
                                     ensureJreForInstaller(context, file, targetMcJava)
                                     val installIntent = Intent(context, JavaGUILauncherActivity::class.java)
                                     installIntent.putExtra("targetJavaVersion", targetMcJava)
-                                    if (loader == "NeoForge" || targetMcJava >= 17) {
-                                        com.cannon.onyxlauncher.modloaders.ForgeUtils.addCliInstallArgs(
-                                            installIntent,
-                                            file,
-                                            com.cannon.onyxlauncher.Tools.DIR_GAME_NEW
-                                        )
-                                    } else {
-                                        com.cannon.onyxlauncher.modloaders.ForgeUtils.addAutoInstallArgs(
-                                            installIntent,
-                                            file,
-                                            targetLaunchVersion
-                                        )
-                                    }
+                                    com.cannon.onyxlauncher.modloaders.ForgeUtils.addCliInstallArgs(
+                                        installIntent,
+                                        file,
+                                        com.cannon.onyxlauncher.Tools.DIR_GAME_NEW
+                                    )
                                     context.startActivity(installIntent)
                                 } ?: run {
                                     triggerLaunch()
@@ -3610,6 +4408,689 @@ fun InstanceDetailsScreen(
 
     if (downloadState.isDownloading) {
         DownloadProgressDialog(downloadState)
+    }
+
+    if (showModpackVersionsDialog) {
+        ModpackVersionsDialog(
+            instance = instance,
+            instanceDir = instanceDirForMeta,
+            modpackMeta = modpackMeta,
+            modpackDetail = modpackDetail,
+            installedVersionIndex = installedVersionIndex,
+            isLoading = isLoadingModpackVersions,
+            onDismiss = { showModpackVersionsDialog = false },
+            onVersionInstalled = { newMeta, newDetail, newIdx, newMcBase ->
+                modpackMeta = newMeta
+                modpackDetail = newDetail
+                installedVersionIndex = newIdx
+                if (newMcBase.isNotBlank() && newMcBase != instance.mcVersion) {
+                    onInstanceUpdated(instance.copy(mcVersion = newMcBase))
+                }
+                refreshTrigger++
+                refreshLists()
+            }
+        )
+    }
+}
+
+fun resolveInstalledModpackVersionIndex(
+    detail: ModDetail?,
+    meta: ModpackInstaller.ModpackMeta?,
+    dirName: String
+): Int {
+    if (detail == null || detail.versionNames == null) return -1
+    if (meta != null) {
+        val hash = meta.installedVersionHash
+        if (!hash.isNullOrBlank() && detail.versionHashes != null) {
+            val idx = detail.versionHashes.indexOfFirst { it != null && it.equals(hash, ignoreCase = true) }
+            if (idx >= 0) return idx
+        }
+        val url = meta.installedVersionUrl
+        if (!url.isNullOrBlank() && detail.versionUrls != null) {
+            val idx = detail.versionUrls.indexOfFirst { it != null && it == url }
+            if (idx >= 0) return idx
+        }
+        val verName = meta.installedVersionName
+        if (!verName.isNullOrBlank()) {
+            val idx = detail.versionNames.indexOfFirst { it != null && it.equals(verName, ignoreCase = true) }
+            if (idx >= 0) return idx
+        }
+    }
+    val dirLower = dirName.lowercase(Locale.ROOT)
+    for (i in detail.versionNames.indices) {
+        val vName = detail.versionNames[i] ?: continue
+        val vHash = detail.versionHashes?.getOrNull(i)
+        val expectedPrefix = ModpackInstaller.safeModpackFileName(detail.title ?: "", vName, vHash).lowercase(Locale.ROOT)
+        if (dirLower == expectedPrefix || dirLower.startsWith("${expectedPrefix}_")) {
+            return i
+        }
+    }
+    return -1
+}
+
+fun modpackSourceLabel(apiSource: Int): String = when (apiSource) {
+    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_CURSEFORGE -> "CurseForge"
+    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_MODRINTH -> "Modrinth"
+    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_TECHNIC -> "Technic"
+    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_ATLAUNCHER -> "ATLauncher"
+    com.cannon.onyxlauncher.modloaders.modpacks.models.Constants.SOURCE_FTB_LEGACY -> "FTB Legacy"
+    else -> "Nieznane"
+}
+
+fun stripHtmlForChangelog(raw: String?): String {
+    if (raw.isNullOrBlank()) return ""
+    return try {
+        val spanned = android.text.Html.fromHtml(raw, android.text.Html.FROM_HTML_MODE_COMPACT)
+        spanned.toString().replace(Regex("\\n{3,}"), "\n\n").trim()
+    } catch (e: Exception) {
+        raw.replace(Regex("<[^>]+>"), " ").trim()
+    }
+}
+
+fun extractCleanPackVersion(rawVersion: String?, mcVersion: String? = null): String? {
+    if (rawVersion.isNullOrBlank()) return null
+    var v = rawVersion.trim()
+    if (!mcVersion.isNullOrBlank()) {
+        val suffix = " - $mcVersion"
+        if (v.endsWith(suffix)) {
+            v = v.removeSuffix(suffix).trim()
+        }
+    }
+    v = v.replace(Regex("\\s+-\\s+1\\.\\d+(?:\\.\\d+)?$"), "").trim()
+    val match = Regex("(?:^|[\\s_-])(v?\\d+\\.\\d+(?:\\.\\d+)*(?:[+-][a-zA-Z0-9._-]+)?)$").find(v)
+    if (match != null) {
+        return match.groupValues[1].removePrefix("v")
+    }
+    return v
+}
+
+@Composable
+fun ModpackVersionsDialog(
+    instance: InstanceData,
+    instanceDir: File,
+    modpackMeta: ModpackInstaller.ModpackMeta?,
+    modpackDetail: ModDetail?,
+    installedVersionIndex: Int,
+    isLoading: Boolean,
+    onDismiss: () -> Unit,
+    onVersionInstalled: (ModpackInstaller.ModpackMeta?, ModDetail, Int, String) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = 0)
+    var installProgress by remember { mutableStateOf<Float?>(null) }
+    var installStatusText by remember { mutableStateOf("") }
+
+    var activeDetail by remember(modpackDetail) { mutableStateOf(modpackDetail) }
+    var activeMeta by remember(modpackMeta) { mutableStateOf(modpackMeta) }
+    var activeInstalledIdx by remember(installedVersionIndex) { mutableStateOf(installedVersionIndex) }
+
+    // Manual link fallback if auto-matching couldn't verify the pack
+    var manualSearchQuery by remember { mutableStateOf(instance.name.replace(Regex("\\s*\\(\\d+\\)$"), "").trim()) }
+    var manualSearchResults by remember { mutableStateOf<List<ModItem>>(emptyList()) }
+    var isSearchingManual by remember { mutableStateOf(false) }
+
+    // Changelog viewer state
+    var expandedChangelogIndex by remember { mutableStateOf<Int?>(null) }
+    var changelogCache by remember { mutableStateOf<Map<Int, String>>(emptyMap()) }
+    var loadingChangelogIndex by remember { mutableStateOf<Int?>(null) }
+
+    fun loadChangelog(index: Int) {
+        val detail = activeDetail ?: return
+        if (expandedChangelogIndex == index) {
+            expandedChangelogIndex = null
+            return
+        }
+        expandedChangelogIndex = index
+        if (changelogCache.containsKey(index)) return
+        loadingChangelogIndex = index
+        scope.launch(Dispatchers.IO) {
+            try {
+                val api = CommonApi(context.getString(R.string.curseforge_api_key))
+                val raw = api.getVersionChangelog(detail, index)
+                val clean = stripHtmlForChangelog(raw).ifBlank { context.getString(R.string.modpack_changelog_empty) }
+                withContext(Dispatchers.Main) {
+                    changelogCache = changelogCache + (index to clean)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    changelogCache = changelogCache + (index to context.getString(R.string.modpack_changelog_error))
+                }
+            } finally {
+                withContext(Dispatchers.Main) {
+                    if (loadingChangelogIndex == index) loadingChangelogIndex = null
+                }
+            }
+        }
+    }
+
+    fun linkManualModpack(item: ModItem) {
+        scope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { isSearchingManual = true }
+            try {
+                val api = CommonApi(context.getString(R.string.curseforge_api_key))
+                val loaded = api.getModDetails(item)
+                val idx = resolveInstalledModpackVersionIndex(loaded, null, instanceDir.name)
+                if (loaded != null && idx >= 0) {
+                    ModpackInstaller.writeModpackMeta(instanceDir, loaded, idx)
+                }
+                val newMeta = ModpackInstaller.readModpackMeta(instanceDir)
+                withContext(Dispatchers.Main) {
+                    activeDetail = loaded
+                    activeInstalledIdx = idx
+                    activeMeta = newMeta
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, context.getString(R.string.error_prefix, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                withContext(Dispatchers.Main) { isSearchingManual = false }
+            }
+        }
+    }
+
+    fun installSelectedVersion(targetIndex: Int) {
+        val detail = activeDetail ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) {
+                    installProgress = 0.05f
+                    installStatusText = context.getString(R.string.status_starting_download)
+                }
+                val progressListener = object : com.cannon.onyxlauncher.progresskeeper.ProgressListener {
+                    override fun onProgressStarted() {}
+                    override fun onProgressUpdated(progress: Int, resid: Int, vararg varArg: Any?) {
+                        scope.launch(Dispatchers.Main) {
+                            installProgress = (progress / 100f).coerceIn(0f, 1f)
+                            installStatusText = try {
+                                context.getString(resid, *varArg)
+                            } catch (e: Exception) {
+                                context.getString(R.string.status_installing)
+                            }
+                        }
+                    }
+                    override fun onProgressEnded() {}
+                }
+                com.cannon.onyxlauncher.progresskeeper.ProgressKeeper.addListener(ProgressLayout.INSTALL_MODPACK, progressListener)
+
+                val api = CommonApi(context.getString(R.string.curseforge_api_key))
+                val modLoader = api.updateMod(detail, targetIndex, instanceDir)
+                com.cannon.onyxlauncher.progresskeeper.ProgressKeeper.removeListener(ProgressLayout.INSTALL_MODPACK, progressListener)
+
+                if (modLoader == null) {
+                    throw IOException(context.getString(R.string.modpack_version_install_failed))
+                }
+
+                completeModLoaderInstallation(context, modLoader) { text ->
+                    installStatusText = text
+                }
+
+                LauncherProfiles.load()
+                val profile = LauncherProfiles.mainProfileJson.profiles[instance.id]
+                if (profile != null) {
+                    profile.lastVersionId = modLoader.versionId
+                    optimizeHeavyModpackProfile(context, profile, instanceDir)
+                    LauncherProfiles.write()
+                }
+
+                val updatedMeta = ModpackInstaller.readModpackMeta(instanceDir)
+                val newBaseMc = extractBaseMinecraftVersion(modLoader.versionId)
+
+                withContext(Dispatchers.Main) {
+                    installProgress = null
+                    installStatusText = ""
+                    activeMeta = updatedMeta
+                    activeInstalledIdx = targetIndex
+                    val vName = detail.versionNames.getOrNull(targetIndex) ?: ""
+                    Toast.makeText(context, context.getString(R.string.modpack_version_installed_toast, vName), Toast.LENGTH_SHORT).show()
+                    onVersionInstalled(updatedMeta, detail, targetIndex, newBaseMc)
+                }
+            } catch (e: Exception) {
+                Log.e("OnyxLauncher", "Failed updating modpack version", e)
+                withContext(Dispatchers.Main) {
+                    installProgress = null
+                    installStatusText = ""
+                    Toast.makeText(context, context.getString(R.string.error_prefix, e.message), Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = { if (installProgress == null) onDismiss() }) {
+        Card(
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.88f),
+            colors = CardDefaults.cardColors(containerColor = CardBg),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, StrokeColor)
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = activeDetail?.title ?: activeMeta?.title ?: instance.name,
+                            color = TextPrimary,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        val sourceText = activeDetail?.let { "${modpackSourceLabel(it.apiSource)} • ID: ${it.id}" }
+                            ?: activeMeta?.let { "${modpackSourceLabel(it.apiSource)} • ID: ${it.projectId}" }
+                            ?: stringResource(R.string.modpack_versions_label)
+                        Text(
+                            text = sourceText,
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = installProgress == null
+                    ) {
+                        Text(text = stringResource(R.string.button_close), color = AccentColor)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Prism-style Info Card ("Informacje Paczki")
+                val installedRawName = activeDetail?.versionNames?.getOrNull(activeInstalledIdx)
+                    ?: activeMeta?.installedVersionName
+                val installedMcVer = activeDetail?.mcVersionNames?.getOrNull(activeInstalledIdx)
+                    ?: activeMeta?.installedMcVersion
+                val installedCleanVersion = extractCleanPackVersion(installedRawName, installedMcVer)
+                Surface(
+                    color = BgDark,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, StrokeColor),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = stringResource(R.string.modpack_info_header),
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.modpack_current_version_label, installedCleanVersion ?: stringResource(R.string.modpack_version_unknown)),
+                            color = if (installedCleanVersion != null) Color(0xFF6EE7B7) else TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (activeDetail != null && activeInstalledIdx >= 0) {
+                            val verId = activeDetail!!.versionIds?.getOrNull(activeInstalledIdx)
+                            if (!verId.isNullOrBlank()) {
+                                Text(
+                                    text = stringResource(R.string.modpack_version_id_published_count, verId, activeDetail!!.versionNames.size),
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                if (installProgress != null) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(BgDark)
+                            .padding(12.dp)
+                    ) {
+                        LinearProgressIndicator(
+                            progress = installProgress!!,
+                            color = Color(0xFF22C55E),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = installStatusText, color = TextSecondary, fontSize = 12.sp)
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                if (isLoading && activeDetail == null) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = AccentColor)
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(text = stringResource(R.string.modpack_loading_published_versions), color = TextSecondary, fontSize = 13.sp)
+                        }
+                    }
+                } else if (activeDetail == null || activeDetail!!.versionNames.isNullOrEmpty()) {
+                    // Fallback: let the user search & link the exact pack so we never show fake versions
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        Text(
+                            text = stringResource(R.string.modpack_manual_match_hint),
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = manualSearchQuery,
+                                onValueChange = { manualSearchQuery = it },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text(stringResource(R.string.modpack_name_placeholder), fontSize = 12.sp) },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = TextPrimary,
+                                    unfocusedTextColor = TextPrimary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Button(
+                                onClick = {
+                                    scope.launch(Dispatchers.IO) {
+                                        withContext(Dispatchers.Main) { isSearchingManual = true }
+                                        try {
+                                            val api = CommonApi(context.getString(R.string.curseforge_api_key))
+                                            val res = api.searchMod(SearchFilters().apply {
+                                                name = manualSearchQuery.trim()
+                                                isModpack = true
+                                                projectType = "modpack"
+                                            })
+                                            withContext(Dispatchers.Main) {
+                                                manualSearchResults = res?.results?.toList() ?: emptyList()
+                                            }
+                                        } catch (e: Exception) {
+                                            withContext(Dispatchers.Main) {
+                                                Toast.makeText(context, context.getString(R.string.modpack_search_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+                                            }
+                                        } finally {
+                                            withContext(Dispatchers.Main) { isSearchingManual = false }
+                                        }
+                                    }
+                                },
+                                enabled = !isSearchingManual && manualSearchQuery.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = AccentColor)
+                            ) {
+                                Text(stringResource(R.string.modpack_search_button), fontSize = 12.sp)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        if (isSearchingManual) {
+                            Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = AccentColor)
+                            }
+                        } else {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(manualSearchResults.size) { i ->
+                                    val item = manualSearchResults[i]
+                                    Surface(
+                                        color = BgDark,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(1.dp, StrokeColor),
+                                        modifier = Modifier.fillMaxWidth().clickable { linkManualModpack(item) }
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            OnyxAsyncImage(url = item.imageUrl, modifier = Modifier.size(36.dp), roundedCorners = 6.dp)
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(item.title, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("${modpackSourceLabel(item.apiSource)} • ID: ${item.id}", color = TextSecondary, fontSize = 11.sp)
+                                            }
+                                            Text(stringResource(R.string.modpack_select_button), color = AccentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    val detail = activeDetail!!
+                    val hasNewerVersion = activeInstalledIdx > 0
+                    if (hasNewerVersion) {
+                        Surface(
+                            color = Color(0xFF0D3B2E),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, Color(0xFF10B981)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.modpack_newer_version_available),
+                                        color = Color(0xFF6EE7B7),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = detail.versionNames[0] ?: "",
+                                        color = TextPrimary,
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = { installSelectedVersion(0) },
+                                    enabled = installProgress == null,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(text = stringResource(R.string.modpack_update_button), fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (activeMeta != null && activeInstalledIdx == -1 && !activeMeta!!.installedVersionName.isNullOrBlank()) {
+                            item {
+                                Surface(
+                                    color = Color(0xFF0D3B2E),
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.5.dp, Color(0xFF10B981)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = activeMeta!!.installedVersionName,
+                                                color = Color(0xFF6EE7B7),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            if (!activeMeta!!.installedMcVersion.isNullOrBlank()) {
+                                                Text(
+                                                    text = "MC ${activeMeta!!.installedMcVersion}",
+                                                    color = TextSecondary,
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                        }
+                                        Surface(
+                                            color = Color(0xFF059669),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = stringResource(R.string.modpack_installed_badge),
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        items(detail.versionNames.size) { index ->
+                            val vName = detail.versionNames[index] ?: "#${index + 1}"
+                            val mcVer = detail.mcVersionNames?.getOrNull(index) ?: ""
+                            val loader = detail.versionLoaders?.getOrNull(index) ?: ""
+                            val relType = (detail.versionReleaseTypes?.getOrNull(index) ?: "release").lowercase(Locale.ROOT)
+                            val dateStr = detail.versionDates?.getOrNull(index) ?: ""
+                            val isInstalled = index == activeInstalledIdx
+                            val isNewer = activeInstalledIdx > 0 && index < activeInstalledIdx
+
+                            val bgColor = if (isInstalled) Color(0xFF0D3B2E) else BgDark
+                            val borderStroke = if (isInstalled) BorderStroke(1.5.dp, Color(0xFF10B981)) else BorderStroke(1.dp, StrokeColor)
+                            val relColor = when (relType) {
+                                "beta" -> Color(0xFFF59E0B)
+                                "alpha" -> Color(0xFFEF4444)
+                                else -> Color(0xFF38BDF8)
+                            }
+
+                            Surface(
+                                color = bgColor,
+                                shape = RoundedCornerShape(10.dp),
+                                border = borderStroke,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = vName,
+                                                color = if (isInstalled) Color(0xFF6EE7B7) else TextPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isInstalled) FontWeight.Bold else FontWeight.Medium,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Spacer(modifier = Modifier.height(3.dp))
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    text = "[$relType]",
+                                                    color = relColor,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                val metaParts = listOfNotNull(
+                                                    mcVer.takeIf { it.isNotBlank() }?.let { "MC $it" },
+                                                    loader.takeIf { it.isNotBlank() }
+                                                )
+                                                if (metaParts.isNotEmpty()) {
+                                                    Text(
+                                                        text = " • ${metaParts.joinToString(" • ")}",
+                                                        color = TextSecondary,
+                                                        fontSize = 10.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                            if (dateStr.isNotBlank()) {
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = dateStr,
+                                                    color = TextSecondary,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            if (isInstalled) {
+                                                Surface(
+                                                    color = Color(0xFF059669),
+                                                    shape = RoundedCornerShape(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = stringResource(R.string.modpack_current_badge),
+                                                        color = Color.White,
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                            } else if (isNewer) {
+                                                Button(
+                                                    onClick = { installSelectedVersion(index) },
+                                                    enabled = installProgress == null,
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(text = stringResource(R.string.modpack_update_button), fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                OutlinedButton(
+                                                    onClick = { installSelectedVersion(index) },
+                                                    enabled = installProgress == null,
+                                                    border = BorderStroke(1.dp, StrokeColor),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(text = stringResource(R.string.global_change), fontSize = 11.sp, color = TextPrimary)
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = if (expandedChangelogIndex == index) stringResource(R.string.modpack_hide_changelog) else stringResource(R.string.modpack_show_changelog),
+                                                color = AccentColor,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.clickable { loadChangelog(index) }
+                                            )
+                                        }
+                                    }
+
+                                    if (expandedChangelogIndex == index) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        HorizontalDivider(color = StrokeColor)
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        if (loadingChangelogIndex == index) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 1.5.dp, color = AccentColor)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(stringResource(R.string.modpack_loading_changelog), color = TextSecondary, fontSize = 11.sp)
+                                            }
+                                        } else {
+                                            Text(
+                                                text = changelogCache[index] ?: "",
+                                                color = TextSecondary,
+                                                fontSize = 11.sp,
+                                                lineHeight = 15.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3979,8 +5460,12 @@ fun SettingsScreen(p: SharedPreferences) {
                 }
             }
         } else {
-            Spacer(modifier = Modifier.height(24.dp)) // padding at bottom when collapsed
+            Spacer(modifier = Modifier.height(24.dp)) // spacing when language card is collapsed
         }
+
+        // Collapsible Controls Selector & Preview
+        ControlsSettingsSection()
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -4308,10 +5793,10 @@ fun InstanceSettingsScreen(instance: InstanceData, onBack: () -> Unit) {
     var selectedJavaVersion by remember(instance.id, refreshTrigger) { mutableStateOf(Tools.getConfiguredRuntime(profile)) }
     var requiredJavaVersion by remember(instance.id, refreshTrigger) { mutableStateOf<Int?>(null) }
     var pendingJavaVersion by remember { mutableStateOf<String?>(null) }
-    val maxRam = remember { (Tools.getTotalDeviceMemory(context) - 1024).coerceAtLeast(1024).coerceAtMost(8192) }
+    val maxRam = remember { (Tools.getTotalDeviceMemory(context) - 1024).coerceAtLeast(1024).coerceAtMost(4096) }
     var ramMb by remember(instance.id, refreshTrigger) { mutableStateOf((profile.ramAllocation ?: 2048).coerceIn(512, maxRam)) }
     var javaArgs by remember(instance.id, refreshTrigger) { mutableStateOf(profile.javaArgs ?: "") }
-    var resolutionScale by remember(instance.id, refreshTrigger) { mutableStateOf((profile.resolutionScale ?: 100).coerceIn(50, 100)) }
+    var resolutionScale by remember(instance.id, refreshTrigger) { mutableStateOf((profile.resolutionScale ?: 100).coerceIn(25, 100)) }
     var alternateSurface by remember(instance.id, refreshTrigger) { mutableStateOf(profile.alternateSurface ?: false) }
     var forceVsync by remember(instance.id, refreshTrigger) { mutableStateOf(profile.forceVsync ?: false) }
     val renderers = remember { Tools.getCompatibleRenderers(context) }
@@ -4496,10 +5981,15 @@ fun InstanceSettingsScreen(instance: InstanceData, onBack: () -> Unit) {
                                                                     installerFile = prep.installerFile
                                                                 }
                                                             }
+                                                            try {
+                                                                syncInstanceEngineEnvironment(context, instance.id, instance.mcVersion, loader)
+                                                            } catch (e: Exception) {
+                                                                Log.e("OnyxLauncher", "Failed to sync engine environment on engine select", e)
+                                                            }
                                                         }
 
                                                         activeLoader = loader
-                                                        if (loader != "Vanilla") {
+                                                        if (loader == "Fabric" || loader == "Quilt") {
                                                             withContext(Dispatchers.IO) {
                                                                 try {
                                                                     ensureFabricLanguageKotlin(context, instance.id, instance.mcVersion)
@@ -4507,35 +5997,38 @@ fun InstanceSettingsScreen(instance: InstanceData, onBack: () -> Unit) {
                                                                     Log.e("OnyxLauncher", "Failed to auto-download Fabric Language Kotlin on engine select", e)
                                                                 }
                                                                 try {
+                                                                    ensureFabricApi(context, instance.id, instance.mcVersion)
+                                                                } catch (e: Exception) {
+                                                                    Log.e("OnyxLauncher", "Failed to auto-download Fabric API on engine select", e)
+                                                                }
+                                                                try {
                                                                     ensureSodiumForIris(context, instance.id, instance.mcVersion)
                                                                 } catch (e: Exception) {
                                                                     Log.e("OnyxLauncher", "Failed to auto-download Sodium on engine select", e)
+                                                                }
+                                                                try {
+                                                                    generateFabricLoaderOverrides(instance.id)
+                                                                } catch (e: Exception) {
+                                                                    Log.e("OnyxLauncher", "Failed to refresh loader overrides on engine select", e)
                                                                 }
                                                             }
                                                         }
 
                                                         installerFile?.let { file ->
                                                              val targetMcJava = try {
-                                                                 com.cannon.onyxlauncher.Tools.getVersionInfo(instance.mcVersion)?.javaVersion?.majorVersion ?: 8
+                                                                 com.cannon.onyxlauncher.Tools.getVersionInfo(instance.mcVersion)?.javaVersion?.majorVersion
+                                                                     ?: getTargetJavaVersionForMc(instance.mcVersion, loader)
                                                              } catch (e: Exception) {
-                                                                 8
+                                                                 getTargetJavaVersionForMc(instance.mcVersion, loader)
                                                              }
                                                              ensureJreForInstaller(context, file, targetMcJava)
                                                              val installIntent = Intent(context, JavaGUILauncherActivity::class.java)
                                                              installIntent.putExtra("targetJavaVersion", targetMcJava)
-                                                             if (loader == "NeoForge" || targetMcJava >= 17) {
-                                                                 com.cannon.onyxlauncher.modloaders.ForgeUtils.addCliInstallArgs(
-                                                                     installIntent,
-                                                                     file,
-                                                                     Tools.DIR_GAME_NEW
-                                                                 )
-                                                             } else {
-                                                                 com.cannon.onyxlauncher.modloaders.ForgeUtils.addAutoInstallArgs(
-                                                                     installIntent,
-                                                                     file,
-                                                                     targetLaunchVersion
-                                                                 )
-                                                             }
+                                                             com.cannon.onyxlauncher.modloaders.ForgeUtils.addCliInstallArgs(
+                                                                 installIntent,
+                                                                 file,
+                                                                 Tools.DIR_GAME_NEW
+                                                             )
                                                              context.startActivity(installIntent)
                                                         } ?: run {
                                                             Toast.makeText(context, context.getString(R.string.engine_set_success, loader), Toast.LENGTH_SHORT).show()
@@ -4592,13 +6085,13 @@ fun InstanceSettingsScreen(instance: InstanceData, onBack: () -> Unit) {
                             Slider(
                                 value = resolutionScale.toFloat(),
                                 onValueChange = { value ->
-                                    resolutionScale = ((value.toInt() / 5) * 5).coerceIn(50, 100)
+                                    resolutionScale = ((value.toInt() / 5) * 5).coerceIn(25, 100)
                                 },
                                 onValueChangeFinished = {
                                     profile.resolutionScale = resolutionScale
                                     saveProfile()
                                 },
-                                valueRange = 50f..100f,
+                                valueRange = 25f..100f,
                                 colors = SliderDefaults.colors(thumbColor = AccentColor, activeTrackColor = AccentColor)
                             )
                         }
@@ -5485,37 +6978,66 @@ Button(
                                     val isResourcePack = destinationDir.name.contains("resourcepacks")
                                     val isShaderPack = destinationDir.name.contains("shaderpacks")
                                     LauncherProfiles.load()
+                                    val cleanBaseMc = extractBaseMinecraftVersion(instanceMcVersion)
                                     val currentLaunchVersion = LauncherProfiles.mainProfileJson.profiles[instanceId]?.lastVersionId
-                                    val activeLoader = modLoaderLabel(currentLaunchVersion ?: "", instanceMcVersion)
-                                    val preferForge = activeLoader == "Forge"
-                                    val preferNeoForge = activeLoader == "NeoForge"
-                                    val preferQuilt = activeLoader == "Quilt"
-                                    val preferFabric = activeLoader == "Fabric"
+                                    val activeLoader = modLoaderLabel(currentLaunchVersion ?: "", cleanBaseMc)
 
-                                    val selectedVersion = chooseBestVersionIndex(
+                                    var selectedVersion = chooseBestVersionIndex(
                                         modDetail,
-                                        instanceMcVersion,
-                                        preferFabric = preferFabric || (!preferForge && !preferNeoForge && !preferQuilt && (isModFile || isShaderPack)),
-                                        preferForge = preferForge,
-                                        preferNeoForge = preferNeoForge,
-                                        preferQuilt = preferQuilt
+                                        cleanBaseMc,
+                                        preferFabric = activeLoader == "Fabric" || (activeLoader == "Vanilla" && (isModFile || isShaderPack)),
+                                        preferForge = activeLoader == "Forge",
+                                        preferNeoForge = activeLoader == "NeoForge",
+                                        preferQuilt = activeLoader == "Quilt"
                                     )
+                                    if (selectedVersion < 0 && isModFile && activeLoader == "Vanilla") {
+                                        for ((tryNeo, tryForge, tryQuilt) in listOf(
+                                            Triple(true, false, false),
+                                            Triple(false, true, false),
+                                            Triple(false, false, true)
+                                        )) {
+                                            val candidate = chooseBestVersionIndex(
+                                                modDetail,
+                                                cleanBaseMc,
+                                                preferFabric = false,
+                                                preferForge = tryForge,
+                                                preferNeoForge = tryNeo,
+                                                preferQuilt = tryQuilt
+                                            )
+                                            if (candidate >= 0) {
+                                                selectedVersion = candidate
+                                                break
+                                            }
+                                        }
+                                    }
                                     if (selectedVersion < 0 || modDetail.versionUrls[selectedVersion].isBlank()) {
-                                        Toast.makeText(context, context.getString(R.string.no_compatible_version_found, instanceMcVersion), Toast.LENGTH_LONG).show()
+                                        Toast.makeText(context, context.getString(R.string.no_compatible_version_found, cleanBaseMc), Toast.LENGTH_LONG).show()
                                         return@Button
                                     }
 
                                     val versionName = modDetail.versionNames[selectedVersion]
-                                    val loaderText = versionLoaderText(modDetail, selectedVersion)
-                                    val isNeoForgeMod = isModFile && loaderText.contains("neoforge")
-                                    val isForgeMod = isModFile && loaderText.contains("forge") && !isNeoForgeMod
-                                    if (false && isModFile && !loaderText.contains("fabric") && (loaderText.contains("forge") || loaderText.contains("neoforge"))) {
-                                        Toast.makeText(context, context.getString(R.string.wrong_modloader_toast), Toast.LENGTH_LONG).show()
-                                        return@Button
+                                    val selectedLoaders = versionLoaderSet(modDetail, selectedVersion)
+                                    val targetLoader = if (activeLoader != "Vanilla") {
+                                        activeLoader
+                                    } else if (isModFile || isShaderPack) {
+                                        when {
+                                            isShaderPack -> "Fabric"
+                                            "fabric" in selectedLoaders -> "Fabric"
+                                            "neoforge" in selectedLoaders -> "NeoForge"
+                                            "forge" in selectedLoaders -> "Forge"
+                                            "quilt" in selectedLoaders -> "Quilt"
+                                            else -> "Fabric"
+                                        }
+                                    } else {
+                                        activeLoader
                                     }
+                                    val targetPreferForge = targetLoader == "Forge"
+                                    val targetPreferNeoForge = targetLoader == "NeoForge"
+                                    val targetPreferQuilt = targetLoader == "Quilt"
+                                    val targetPreferFabric = targetLoader == "Fabric"
 
                                     val extension = if (isModFile) ".jar" else ".zip"
-                                    val destinationFile = File(destinationDir, safeDownloadFileName(versionName, instanceMcVersion, extension))
+                                    val destinationFile = File(destinationDir, safeDownloadFileName(versionName, cleanBaseMc, extension))
                                     val versionUrl = modDetail.versionUrls[selectedVersion]
                                     val instanceDir = destinationDir.parentFile ?: destinationDir
 
@@ -5524,18 +7046,18 @@ Button(
                                         try {
                                             var forgePreparation: ForgeLoaderPreparation? = null
                                             withContext(Dispatchers.IO) {
-                                                if (isNeoForgeMod) {
+                                                val launchVer = currentLaunchVersion ?: cleanBaseMc
+                                                val needsLoaderInstall = (isModFile || isShaderPack) && (
+                                                    modLoaderLabel(launchVer, cleanBaseMc) != targetLoader ||
+                                                        !isLoaderInstalled(launchVer, cleanBaseMc)
+                                                    )
+                                                if (needsLoaderInstall) {
                                                     withContext(Dispatchers.Main) { downloadProgress = 0.12f }
-                                                    forgePreparation = prepareNeoForgeLoaderForInstance(instanceId, instanceMcVersion)
-                                                } else if (isForgeMod) {
-                                                    withContext(Dispatchers.Main) { downloadProgress = 0.12f }
-                                                    forgePreparation = prepareForgeLoaderForInstance(instanceId, instanceMcVersion)
-                                                } else if (isModFile || isShaderPack) {
-                                                    withContext(Dispatchers.Main) { downloadProgress = 0.12f }
-                                                    if (activeLoader == "Quilt") {
-                                                        installQuiltLoaderForInstance(instanceId, instanceMcVersion)
-                                                    } else {
-                                                        installFabricLoaderForInstance(instanceId, instanceMcVersion)
+                                                    when (targetLoader) {
+                                                        "NeoForge" -> forgePreparation = prepareNeoForgeLoaderForInstance(instanceId, cleanBaseMc)
+                                                        "Forge" -> forgePreparation = prepareForgeLoaderForInstance(instanceId, cleanBaseMc)
+                                                        "Quilt" -> installQuiltLoaderForInstance(instanceId, cleanBaseMc)
+                                                        "Fabric" -> installFabricLoaderForInstance(instanceId, cleanBaseMc)
                                                     }
                                                 }
                                                 if (isModFile) {
@@ -5543,14 +7065,14 @@ Button(
                                                     val unresolvedDependencies = installRequiredDependencyMods(
                                                         context = context,
                                                         api = CommonApi(context.getString(R.string.curseforge_api_key)),
-                                                        baseVersion = instanceMcVersion,
+                                                        baseVersion = cleanBaseMc,
                                                         modsDir = File(instanceDir, "mods"),
                                                         parentDetail = modDetail,
                                                         parentVersionIndex = selectedVersion,
-                                                        preferFabric = preferFabric || (!preferForge && !preferNeoForge && !preferQuilt),
-                                                        preferForge = preferForge,
-                                                        preferNeoForge = preferNeoForge,
-                                                        preferQuilt = preferQuilt
+                                                        preferFabric = targetPreferFabric,
+                                                        preferForge = targetPreferForge,
+                                                        preferNeoForge = targetPreferNeoForge,
+                                                        preferQuilt = targetPreferQuilt
                                                     )
                                                     if (unresolvedDependencies.isNotEmpty()) {
                                                         throw java.io.IOException(context.getString(R.string.mod_requires_dependencies, unresolvedDependencies.joinToString(", ")))
@@ -5558,29 +7080,29 @@ Button(
                                                 }
                                                 if (isShaderPack) {
                                                     withContext(Dispatchers.Main) { downloadProgress = 0.25f }
-                                                    if (activeLoader == "Forge" || activeLoader == "NeoForge") {
+                                                    if (targetLoader == "Forge" || targetLoader == "NeoForge") {
                                                         downloadDependencyMod(
                                                             context = context,
-                                                            baseVersion = instanceMcVersion,
+                                                            baseVersion = cleanBaseMc,
                                                             instanceDir = instanceDir,
                                                             query = "Oculus",
                                                             preferFabric = false,
-                                                            preferForge = activeLoader == "Forge",
-                                                            preferNeoForge = activeLoader == "NeoForge"
+                                                            preferForge = targetPreferForge,
+                                                            preferNeoForge = targetPreferNeoForge
                                                         )
                                                         downloadDependencyMod(
                                                             context = context,
-                                                            baseVersion = instanceMcVersion,
+                                                            baseVersion = cleanBaseMc,
                                                             instanceDir = instanceDir,
                                                             query = "Embeddium",
                                                             preferFabric = false,
-                                                            preferForge = activeLoader == "Forge",
-                                                            preferNeoForge = activeLoader == "NeoForge"
+                                                            preferForge = targetPreferForge,
+                                                            preferNeoForge = targetPreferNeoForge
                                                         )
                                                     } else {
                                                         downloadDependencyMod(
                                                             context = context,
-                                                            baseVersion = instanceMcVersion,
+                                                            baseVersion = cleanBaseMc,
                                                             instanceDir = instanceDir,
                                                             query = "Iris Shaders",
                                                             preferFabric = true,
@@ -5588,7 +7110,7 @@ Button(
                                                         )
                                                         downloadDependencyMod(
                                                             context = context,
-                                                            baseVersion = instanceMcVersion,
+                                                            baseVersion = cleanBaseMc,
                                                             instanceDir = instanceDir,
                                                             query = "Sodium",
                                                             preferFabric = true,
@@ -5600,12 +7122,17 @@ Button(
                                                 downloadFileBlocking(versionUrl, destinationFile)
                                                 if (isResourcePack) enableResourcePack(instanceDir, destinationFile.name)
                                                 if (isShaderPack) enableShaderPack(instanceDir, destinationFile.name)
+                                                try {
+                                                    syncInstanceEngineEnvironment(context, instanceId, cleanBaseMc, targetLoader)
+                                                } catch (e: Exception) {
+                                                    Log.e("OnyxLauncher", "Failed to sync engine environment after mod install", e)
+                                                }
                                                 withContext(Dispatchers.Main) {
                                                     downloadProgress = 1f
                                                     val message = when {
-                                                        (isForgeMod || isNeoForgeMod) && forgePreparation?.installerFile != null -> context.getString(R.string.mod_downloaded_forge_installer_warning)
-                                                        isForgeMod -> context.getString(R.string.mod_installed_forge)
-                                                        isNeoForgeMod -> context.getString(R.string.mod_installed_neoforge)
+                                                        (targetLoader == "Forge" || targetLoader == "NeoForge") && forgePreparation?.installerFile != null -> context.getString(R.string.mod_downloaded_forge_installer_warning)
+                                                        targetLoader == "Forge" && isModFile -> context.getString(R.string.mod_installed_forge)
+                                                        targetLoader == "NeoForge" && isModFile -> context.getString(R.string.mod_installed_neoforge)
                                                         isShaderPack -> context.getString(R.string.shader_installed_enabled)
                                                         isResourcePack -> context.getString(R.string.resourcepack_installed_enabled)
                                                         else -> context.getString(R.string.mod_installed_default)
@@ -5615,17 +7142,18 @@ Button(
                                                     onDismiss()
                                                     forgePreparation?.installerFile?.let { installerFile ->
                                                         val targetMcJava = try {
-                                                            com.cannon.onyxlauncher.Tools.getVersionInfo(instanceMcVersion)?.javaVersion?.majorVersion ?: 8
+                                                            com.cannon.onyxlauncher.Tools.getVersionInfo(cleanBaseMc)?.javaVersion?.majorVersion
+                                                                ?: getTargetJavaVersionForMc(cleanBaseMc, targetLoader)
                                                         } catch (e: Exception) {
-                                                            8
+                                                            getTargetJavaVersionForMc(cleanBaseMc, targetLoader)
                                                         }
                                                         ensureJreForInstaller(context, installerFile, targetMcJava)
                                                         val installIntent = Intent(context, JavaGUILauncherActivity::class.java)
                                                         installIntent.putExtra("targetJavaVersion", targetMcJava)
-                                                        com.cannon.onyxlauncher.modloaders.ForgeUtils.addAutoInstallArgs(
+                                                        com.cannon.onyxlauncher.modloaders.ForgeUtils.addCliInstallArgs(
                                                             installIntent,
                                                             installerFile,
-                                                            forgePreparation!!.launchVersion
+                                                            Tools.DIR_GAME_NEW
                                                         )
                                                         context.startActivity(installIntent)
                                                     }
@@ -5688,7 +7216,7 @@ data class PackMetadata(
     val iconBitmap: android.graphics.Bitmap?
 )
 
-fun getPackMetadata(file: File, isShader: Boolean): PackMetadata {
+fun getPackMetadata(file: File, isShader: Boolean, context: Context? = null): PackMetadata {
     val cleanName = file.name.removeSuffix(".zip").removeSuffix(".ZIP")
         .replace("_", " ")
         .replace("-", " ")
@@ -5706,7 +7234,8 @@ fun getPackMetadata(file: File, isShader: Boolean): PackMetadata {
         title = file.name.removeSuffix(".zip")
     }
 
-    var description = "Paczka lokalna"
+    val defaultLocalLabel = context?.getString(R.string.local_pack_label) ?: "Local pack (.zip)"
+    var description = defaultLocalLabel
     var iconBitmap: android.graphics.Bitmap? = null
 
     try {
@@ -5737,8 +7266,8 @@ fun getPackMetadata(file: File, isShader: Boolean): PackMetadata {
         // Fallback
     }
 
-    if (isShader && description == "Paczka lokalna") {
-        description = "Kolekcja shaderów OpenGL"
+    if (isShader && description == defaultLocalLabel) {
+        description = context?.getString(R.string.opengl_shader_collection) ?: "OpenGL shader collection"
     }
 
     return PackMetadata(title, description, iconBitmap)

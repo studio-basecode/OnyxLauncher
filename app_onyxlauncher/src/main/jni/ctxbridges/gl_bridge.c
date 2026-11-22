@@ -166,13 +166,17 @@ void gl_swap_buffers() {
         eglMakeCurrent_p(g_EglDisplay, currentBundle->surface, currentBundle->surface, currentBundle->context);
         currentBundle->state = STATE_RENDERER_ALIVE;
     }
-    if(currentBundle->surface != NULL)
-        if(!eglSwapBuffers_p(g_EglDisplay, currentBundle->surface) && eglGetError_p() == EGL_BAD_SURFACE) {
-            eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-            currentBundle->newNativeSurface = NULL;
-            gl_swap_surface(currentBundle);
-            eglMakeCurrent_p(g_EglDisplay, currentBundle->surface, currentBundle->surface, currentBundle->context);
-            LOGI("The window has died, awaiting window change");
+    if(currentBundle->surface != NULL) {
+        if(!eglSwapBuffers_p(g_EglDisplay, currentBundle->surface)) {
+            EGLint err = eglGetError_p();
+            if(err == EGL_BAD_SURFACE || err == EGL_BAD_NATIVE_WINDOW || err == EGL_BAD_ALLOC) {
+                eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+                currentBundle->newNativeSurface = NULL;
+                gl_swap_surface(currentBundle);
+                eglMakeCurrent_p(g_EglDisplay, currentBundle->surface, currentBundle->surface, currentBundle->context);
+                LOGI("The window has died, awaiting window change");
+            }
+        }
     }
 
 }

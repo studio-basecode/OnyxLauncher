@@ -40,6 +40,7 @@ LOCAL_SRC_FILES := \
 ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
 LOCAL_CFLAGS += -DADRENO_POSSIBLE
 endif
+LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
@@ -49,13 +50,14 @@ LOCAL_SHARED_LIBRARIES := bytehook pojavexec
 LOCAL_SRC_FILES := \
     native_hooks/exit_hook.c \
     native_hooks/chmod_hook.c
+LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 #ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
 include $(CLEAR_VARS)
 LOCAL_MODULE := linkerhook
 LOCAL_SRC_FILES := driver_helper/hook.c
-LOCAL_LDFLAGS := -z global
+LOCAL_LDFLAGS := -z global -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 #endif
 
@@ -63,6 +65,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := pojavexec_awt
 LOCAL_SRC_FILES := \
     awt_bridge.c
+LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 # Helper to get current thread
@@ -74,6 +77,7 @@ include $(BUILD_SHARED_LIBRARY)
 # fake lib for linker
 include $(CLEAR_VARS)
 LOCAL_MODULE := awt_headless
+LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 # libawt_xawt without X11, used to get Caciocavallo working
@@ -84,6 +88,7 @@ LOCAL_MODULE := awt_xawt
 LOCAL_EXPORT_C_INCLUDES := $(LOCAL_PATH)
 LOCAL_SHARED_LIBRARIES := awt_headless
 LOCAL_SRC_FILES := xawt_fake.c
+LOCAL_LDFLAGS += -Wl,-z,max-page-size=16384
 include $(BUILD_SHARED_LIBRARY)
 
 # delete fake libs after linked

@@ -89,9 +89,7 @@ static void *logger_thread() {
 JNIEXPORT void JNICALL
 Java_com_cannon_onyxlauncher_Logger_begin(JNIEnv *env, __attribute((unused)) jclass clazz, jstring logPath) {
     if(latestlog_fd != -1) {
-        int localfd = latestlog_fd;
-        latestlog_fd = -1;
-        close(localfd);
+        return;
     }
     if(logger_onEventLogged == NULL) {
         jclass eventLogListener = (*env)->FindClass(env, "com/cannon/onyxlauncher/Logger$eventLogListener");

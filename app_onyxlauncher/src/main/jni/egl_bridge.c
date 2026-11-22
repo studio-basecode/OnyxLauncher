@@ -165,6 +165,16 @@ void load_vulkan() {
 }
 
 int pojavInitOpenGL() {
+    // Re-read ONYX_RENDERER because libpojavexec loads before setJavaEnvironment() populates env vars
+    const char *renderer = getenv("ONYX_RENDERER");
+    if (renderer != NULL) {
+        if (strcmp(renderer, "vulkan_zink") == 0) {
+            pojav_environ->config_renderer = RENDERER_VK_ZINK;
+        } else if (strncmp(renderer, "opengles", 8) == 0) {
+            pojav_environ->config_renderer = RENDERER_GL4ES;
+        }
+    }
+
     // Only affects GL4ES as of now
     const char *forceVsync = getenv("FORCE_VSYNC");
     if (forceVsync && strcmp(forceVsync, "true") == 0)
@@ -185,8 +195,18 @@ int pojavInitOpenGL() {
 }
 
 extern void updateMonitorSize(int width, int height);
+extern void bigcore_set_affinity();
+static __thread bool sAffinitySet = false;
+
+static void maybe_set_big_core_affinity(void) {
+    if (!sAffinitySet && getenv("ONYX_BIG_CORE_AFFINITY") != NULL) {
+        bigcore_set_affinity();
+        sAffinitySet = true;
+    }
+}
 
 EXTERNAL_API int pojavInit() {
+    maybe_set_big_core_affinity();
     pojav_environ->glfwThreadVmEnv = get_attached_env(pojav_environ->runtimeJavaVMPtr);
     if(pojav_environ->glfwThreadVmEnv == NULL) {
         printf("Failed to attach Java-side JNIEnv to GLFW thread\n");
@@ -219,12 +239,24 @@ EXTERNAL_API void pojavSetWindowHint(int hint, int value) {
     }
 }
 
+static bool sFirstFrameNotified = false;
+
 EXTERNAL_API void pojavSwapBuffers() {
     br_swap_buffers();
+    if (!sFirstFrameNotified && pojav_environ->dalvikJavaVMPtr != NULL && pojav_environ->method_onFirstFrameRendered != NULL) {
+        sFirstFrameNotified = true;
+        JNIEnv *dvm_env = get_attached_env(pojav_environ->dalvikJavaVMPtr);
+        if (dvm_env != NULL) {
+            (*dvm_env)->CallStaticVoidMethod(dvm_env, pojav_environ->bridgeClazz, pojav_environ->method_onFirstFrameRendered);
+        }
+    }
 }
 
 
 EXTERNAL_API void pojavMakeCurrent(void* window) {
+    if (window != NULL) {
+        maybe_set_big_core_affinity();
+    }
     br_make_current((basic_render_window_t*)window);
 }
 

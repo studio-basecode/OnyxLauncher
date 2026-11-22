@@ -122,10 +122,19 @@ public class ModrinthApi implements ModpackApi{
         String[] urls = new String[response.size()];
         String[] hashes = new String[response.size()];
         String[] dependencies = new String[response.size()];
+        String[] releaseTypes = new String[response.size()];
+        String[] dates = new String[response.size()];
+        String[] versionIds = new String[response.size()];
+        String[] changelogs = new String[response.size()];
 
         for (int i=0; i<response.size(); ++i) {
             JsonObject version = response.get(i).getAsJsonObject();
             names[i] = version.get("name").getAsString();
+            versionIds[i] = version.has("id") && !version.get("id").isJsonNull() ? version.get("id").getAsString() : "";
+            releaseTypes[i] = version.has("version_type") && !version.get("version_type").isJsonNull() ? version.get("version_type").getAsString() : "release";
+            String pubDate = version.has("date_published") && !version.get("date_published").isJsonNull() ? version.get("date_published").getAsString() : "";
+            dates[i] = pubDate.length() >= 10 ? pubDate.substring(0, 10) : pubDate;
+            changelogs[i] = version.has("changelog") && !version.get("changelog").isJsonNull() ? version.get("changelog").getAsString() : "";
             mcNames[i] = joinStringArray(version.get("game_versions").getAsJsonArray());
             loaders[i] = joinStringArray(version.get("loaders").getAsJsonArray());
             urls[i] = version.get("files").getAsJsonArray().get(0).getAsJsonObject().get("url").getAsString();
@@ -142,8 +151,20 @@ public class ModrinthApi implements ModpackApi{
         }
 
         ModDetail detail = new ModDetail(detailItem, names, mcNames, loaders, urls, hashes, dependencies);
+        detail.versionReleaseTypes = releaseTypes;
+        detail.versionDates = dates;
+        detail.versionIds = versionIds;
+        detail.versionChangelogs = changelogs;
         detail.screenshotUrls = screenshotUrls;
         return detail;
+    }
+
+    @Override
+    public String getVersionChangelog(ModDetail detail, int versionIndex) {
+        if (detail != null && detail.versionChangelogs != null && versionIndex >= 0 && versionIndex < detail.versionChangelogs.length) {
+            return detail.versionChangelogs[versionIndex];
+        }
+        return null;
     }
 
     private static String joinStringArray(JsonArray array) {
@@ -186,6 +207,11 @@ public class ModrinthApi implements ModpackApi{
     public ModLoader installMod(ModDetail modDetail, int selectedVersion) throws IOException{
         //TODO considering only modpacks for now
         return ModpackInstaller.installModpack(modDetail, selectedVersion, this::installMrpack);
+    }
+
+    @Override
+    public ModLoader updateMod(ModDetail modDetail, int selectedVersion, File instanceDestination) throws IOException {
+        return ModpackInstaller.updateModpack(modDetail, selectedVersion, instanceDestination, this::installMrpack);
     }
 
     private static ModLoader createInfo(ModrinthIndex modrinthIndex) {

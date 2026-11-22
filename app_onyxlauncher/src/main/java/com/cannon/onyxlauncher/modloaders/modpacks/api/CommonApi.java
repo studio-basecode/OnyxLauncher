@@ -11,6 +11,7 @@ import com.cannon.onyxlauncher.modloaders.modpacks.models.ModItem;
 import com.cannon.onyxlauncher.modloaders.modpacks.models.SearchFilters;
 import com.cannon.onyxlauncher.modloaders.modpacks.models.SearchResult;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,6 +124,17 @@ public class CommonApi implements ModpackApi {
     @Override
     public ModLoader installMod(ModDetail modDetail, int selectedVersion) throws IOException {
         return getModpackApi(modDetail.apiSource).installMod(modDetail, selectedVersion);
+    }
+
+    @Override
+    public ModLoader updateMod(ModDetail modDetail, int selectedVersion, File instanceDestination) throws IOException {
+        return getModpackApi(modDetail.apiSource).updateMod(modDetail, selectedVersion, instanceDestination);
+    }
+
+    @Override
+    public String getVersionChangelog(ModDetail detail, int versionIndex) {
+        if (detail == null) return null;
+        return getModpackApi(detail.apiSource).getVersionChangelog(detail, versionIndex);
     }
 
     private @NonNull ModpackApi getModpackApi(int apiSource) {

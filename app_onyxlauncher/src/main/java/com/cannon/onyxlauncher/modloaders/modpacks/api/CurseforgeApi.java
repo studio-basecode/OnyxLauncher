@@ -185,9 +185,17 @@ public class CurseforgeApi implements ModpackApi{
         String[] versionUrls = new String[length];
         String[] hashes = new String[length];
         String[] dependencies = new String[length];
+        String[] releaseTypes = new String[length];
+        String[] dates = new String[length];
+        String[] versionIds = new String[length];
         for(int i = 0; i < allModDetails.size(); i++) {
             JsonObject modDetail = allModDetails.get(i);
             versionNames[i] = modDetail.get("displayName").getAsString();
+            versionIds[i] = modDetail.has("id") && !modDetail.get("id").isJsonNull() ? modDetail.get("id").getAsString() : "";
+            int relType = modDetail.has("releaseType") && !modDetail.get("releaseType").isJsonNull() ? modDetail.get("releaseType").getAsInt() : 1;
+            releaseTypes[i] = relType == 2 ? "beta" : (relType == 3 ? "alpha" : "release");
+            String fileDate = modDetail.has("fileDate") && !modDetail.get("fileDate").isJsonNull() ? modDetail.get("fileDate").getAsString() : "";
+            dates[i] = fileDate.length() >= 10 ? fileDate.substring(0, 10) : fileDate;
 
             JsonElement downloadUrl = modDetail.get("downloadUrl");
             String resolvedDownloadUrl = null;
@@ -223,14 +231,40 @@ public class CurseforgeApi implements ModpackApi{
             dependencies[i] = joinRequiredCurseforgeDependencies(GsonJsonUtils.getJsonArraySafe(modDetail, "dependencies"));
         }
         ModDetail detail = new ModDetail(detailItem, versionNames, mcVersionNames, versionLoaders, versionUrls, hashes, dependencies);
+        detail.versionReleaseTypes = releaseTypes;
+        detail.versionDates = dates;
+        detail.versionIds = versionIds;
         detail.screenshotUrls = screenshotUrls;
         return detail;
+    }
+
+    @Override
+    public String getVersionChangelog(ModDetail detail, int versionIndex) {
+        if (detail == null || detail.versionIds == null || versionIndex < 0 || versionIndex >= detail.versionIds.length) {
+            return null;
+        }
+        String fileId = detail.versionIds[versionIndex];
+        if (fileId == null || fileId.isEmpty()) return null;
+        try {
+            JsonObject resp = mApiHandler.get("mods/" + detail.id + "/files/" + fileId + "/changelog", JsonObject.class);
+            if (resp != null && resp.has("data") && !resp.get("data").isJsonNull()) {
+                return resp.get("data").getAsString();
+            }
+        } catch (Exception e) {
+            Log.w("CurseforgeApi", "Failed to load changelog for " + detail.id + "/" + fileId, e);
+        }
+        return null;
     }
 
     @Override
     public ModLoader installMod(ModDetail modDetail, int selectedVersion) throws IOException{
         //TODO considering only modpacks for now
         return ModpackInstaller.installModpack(modDetail, selectedVersion, this::installCurseforgeZip);
+    }
+
+    @Override
+    public ModLoader updateMod(ModDetail modDetail, int selectedVersion, File instanceDestination) throws IOException {
+        return ModpackInstaller.updateModpack(modDetail, selectedVersion, instanceDestination, this::installCurseforgeZip);
     }
 
 
@@ -256,26 +290,21 @@ public class CurseforgeApi implements ModpackApi{
 
     public ModLoader installCurseforgeZip(File zipFile, File instanceDestination) throws IOException {
         try (ZipFile modpackZipFile = new ZipFile(zipFile)){
-            CurseManifest curseManifest = Tools.GLOBAL_GSON.fromJson(
-                    Tools.read(ZipUtils.getEntryStream(modpackZipFile, "manifest.json")),
-                    CurseManifest.class);
+            String manifestRaw = Tools.read(ZipUtils.getEntryStream(modpackZipFile, "manifest.json"));
+            CurseManifest curseManifest = Tools.GLOBAL_GSON.fromJson(manifestRaw, CurseManifest.class);
             if(!verifyManifest(curseManifest)) {
                 Log.i("CurseforgeApi","manifest verification failed");
                 return null;
             }
-            ModDownloader modDownloader = new ModDownloader(new File(instanceDestination,"mods"), true);
-            int fileCount = curseManifest.files.length;
-            for(int i = 0; i < fileCount; i++) {
-                final CurseManifest.CurseFile curseFile = curseManifest.files[i];
-                modDownloader.submitDownload(()->{
-                    String url = getDownloadUrl(curseFile.projectID, curseFile.fileID);
-                    if(url == null && curseFile.required)
-                        throw new IOException("Failed to obtain download URL for "+curseFile.projectID+" "+curseFile.fileID);
-                    else if(url == null) return null;
-                    return new ModDownloader.FileInfo(url, FileUtils.getFileName(url), getDownloadSha1(curseFile.projectID, curseFile.fileID));
-                });
+            try {
+                File savedManifest = new File(instanceDestination, "manifest.json");
+                FileUtils.ensureParentDirectory(savedManifest);
+                Tools.write(savedManifest.getAbsolutePath(), manifestRaw);
+            } catch (Exception e) {
+                Log.w("CurseforgeApi", "Could not persist manifest.json to instance dir", e);
             }
-            modDownloader.awaitFinish((c,m)->
+
+            downloadManifestFiles(curseManifest, instanceDestination, (c, m) ->
                     ProgressKeeper.submitProgress(ProgressLayout.INSTALL_MODPACK, (int) Math.max((float)c/m*100,0), R.string.modpack_download_downloading_mods_fc, c, m)
             );
             String overridesDir = "overrides";
@@ -283,6 +312,127 @@ public class CurseforgeApi implements ModpackApi{
             ZipUtils.zipExtract(modpackZipFile, overridesDir, instanceDestination);
             return createInfo(curseManifest.minecraft);
         }
+    }
+
+    public void ensureManifestFilesInstalled(File instanceDestination, @Nullable Tools.DownloaderFeedback feedback) throws IOException {
+        File manifestFile = new File(instanceDestination, "manifest.json");
+        if (!manifestFile.isFile()) return;
+        String manifestRaw = Tools.read(manifestFile.getAbsolutePath());
+        CurseManifest curseManifest = Tools.GLOBAL_GSON.fromJson(manifestRaw, CurseManifest.class);
+        if (!verifyManifest(curseManifest) || curseManifest.files == null || curseManifest.files.length == 0) return;
+
+        downloadManifestFiles(curseManifest, instanceDestination, feedback);
+    }
+
+    private void downloadManifestFiles(CurseManifest curseManifest, File instanceDestination, @Nullable Tools.DownloaderFeedback feedback) throws IOException {
+        File modsDir = new File(instanceDestination, "mods");
+        if (!modsDir.exists()) modsDir.mkdirs();
+
+        // Batch-query all file IDs via POST /v1/mods/files in one request to avoid HTTP 429 rate-limits
+        HashMap<Long, JsonObject> batchMap = new HashMap<>();
+        try {
+            JsonObject requestBody = new JsonObject();
+            JsonArray fileIdsArray = new JsonArray();
+            for (CurseManifest.CurseFile cf : curseManifest.files) {
+                fileIdsArray.add(cf.fileID);
+            }
+            requestBody.add("fileIds", fileIdsArray);
+            JsonObject batchResp = mApiHandler.post("mods/files", requestBody, JsonObject.class);
+            JsonArray dataArr = GsonJsonUtils.getJsonArraySafe(batchResp, "data");
+            if (dataArr != null) {
+                for (JsonElement el : dataArr) {
+                    JsonObject obj = GsonJsonUtils.getJsonObjectSafe(el);
+                    if (obj != null && obj.has("id") && !obj.get("id").isJsonNull()) {
+                        batchMap.put(obj.get("id").getAsLong(), obj);
+                    }
+                }
+            }
+            Log.i("CurseforgeApi", "Batch resolved " + batchMap.size() + "/" + curseManifest.files.length + " files via POST /v1/mods/files");
+        } catch (Exception e) {
+            Log.w("CurseforgeApi", "Batch POST /v1/mods/files failed, falling back to per-file queries", e);
+        }
+
+        // Check existing files in mods/ (including URL-encoded variants and .disabled_gl4es)
+        File[] existingModFiles = modsDir.listFiles();
+        java.util.HashSet<String> validExistingNames = new java.util.HashSet<>();
+        if (existingModFiles != null) {
+            for (File f : existingModFiles) {
+                if (!f.isFile()) continue;
+                String n = f.getName();
+                if (n.endsWith(".disabled_gl4es")) {
+                    String orig = n.substring(0, n.length() - ".disabled_gl4es".length());
+                    validExistingNames.add(orig);
+                    try {
+                        validExistingNames.add(java.net.URLDecoder.decode(orig, "UTF-8"));
+                    } catch (Exception ignored) {}
+                } else if (com.cannon.onyxlauncher.utils.DownloadUtils.isValidZipArchive(f)) {
+                    validExistingNames.add(n);
+                    try {
+                        validExistingNames.add(java.net.URLDecoder.decode(n, "UTF-8"));
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        ArrayList<CurseManifest.CurseFile> missingFiles = new ArrayList<>();
+        for (CurseManifest.CurseFile cf : curseManifest.files) {
+            JsonObject cached = batchMap.get(cf.fileID);
+            if (cached != null) {
+                String fName = GsonJsonUtils.getStringSafe(cached, "fileName");
+                if (fName != null && validExistingNames.contains(fName)) {
+                    continue;
+                }
+            }
+            missingFiles.add(cf);
+        }
+
+        if (missingFiles.isEmpty()) {
+            return;
+        }
+        Log.i("CurseforgeApi", "Downloading " + missingFiles.size() + " missing modpack files into " + modsDir.getAbsolutePath());
+
+        ModDownloader modDownloader = new ModDownloader(modsDir, true);
+        for (final CurseManifest.CurseFile curseFile : missingFiles) {
+            final JsonObject preloaded = batchMap.get(curseFile.fileID);
+            modDownloader.submitDownload(() -> {
+                String url = null;
+                String fileName = null;
+                String sha1 = null;
+                if (preloaded != null) {
+                    fileName = GsonJsonUtils.getStringSafe(preloaded, "fileName");
+                    url = GsonJsonUtils.getStringSafe(preloaded, "downloadUrl");
+                    if ((url == null || url.isEmpty()) && fileName != null) {
+                        long id = curseFile.fileID;
+                        url = String.format(Locale.ROOT, "https://edge.forgecdn.net/files/%d/%d/%s", id / 1000, id % 1000, fileName);
+                    }
+                    sha1 = getSha1FromModData(preloaded);
+                }
+                if (url == null || url.isEmpty()) {
+                    url = getDownloadUrl(curseFile.projectID, curseFile.fileID);
+                }
+                if (url == null && curseFile.required) {
+                    throw new IOException("Failed to obtain download URL for " + curseFile.projectID + " " + curseFile.fileID);
+                } else if (url == null) {
+                    return null;
+                }
+                if (fileName == null || fileName.isEmpty()) {
+                    fileName = FileUtils.getFileName(url);
+                }
+                if (sha1 == null && preloaded == null) {
+                    sha1 = getDownloadSha1(curseFile.projectID, curseFile.fileID);
+                }
+                // Route .zip resourcepacks in manifest to ../resourcepacks/ so NeoForge doesn't treat them as mod jars
+                String relativeTarget = fileName.toLowerCase(Locale.ROOT).endsWith(".zip")
+                        ? "../resourcepacks/" + fileName
+                        : fileName;
+                return new ModDownloader.FileInfo(url, relativeTarget, sha1);
+            });
+        }
+        modDownloader.awaitFinish((c, m) -> {
+            if (feedback != null) {
+                feedback.updateProgress(c, m);
+            }
+        });
     }
 
     private ModLoader createInfo(CurseManifest.CurseMinecraft minecraft) {
@@ -327,10 +477,10 @@ public class CurseforgeApi implements ModpackApi{
 
         // Otherwise, fallback to building an edge link
         JsonObject fallbackResponse = mApiHandler.get(String.format("mods/%s/files/%s", projectID, fileID), JsonObject.class);
-        if (fallbackResponse != null && !fallbackResponse.get("data").isJsonNull()){
+        if (fallbackResponse != null && fallbackResponse.has("data") && !fallbackResponse.get("data").isJsonNull()){
             JsonObject modData = fallbackResponse.get("data").getAsJsonObject();
             int id = modData.get("id").getAsInt();
-            return String.format(Locale.ROOT, "https://edge.forgecdn.net/files/%d/%03d/%s", id / 1000, id % 1000, modData.get("fileName").getAsString());
+            return String.format(Locale.ROOT, "https://edge.forgecdn.net/files/%d/%d/%s", id / 1000, id % 1000, modData.get("fileName").getAsString());
         }
 
         return null;

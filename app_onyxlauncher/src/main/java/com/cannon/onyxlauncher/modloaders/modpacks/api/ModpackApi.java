@@ -13,6 +13,7 @@ import com.cannon.onyxlauncher.modloaders.modpacks.models.ModItem;
 import com.cannon.onyxlauncher.modloaders.modpacks.models.SearchFilters;
 import com.cannon.onyxlauncher.modloaders.modpacks.models.SearchResult;
 
+import java.io.File;
 import java.io.IOException;
 
 /**
@@ -70,4 +71,12 @@ public interface ModpackApi {
      * @param selectedVersion The selected version
      */
     ModLoader installMod(ModDetail modDetail, int selectedVersion) throws IOException;
+
+    default ModLoader updateMod(ModDetail modDetail, int selectedVersion, File instanceDestination) throws IOException {
+        throw new UnsupportedOperationException("Updating is not supported by this modpack source");
+    }
+
+    default String getVersionChangelog(ModDetail detail, int versionIndex) {
+        return null;
+    }
 }

@@ -21,6 +21,9 @@ import java.io.IOException;
 
 
 public class CustomControlsActivity extends BaseActivity implements EditorExitable {
+	public static final String EXTRA_BASE_LAYOUT_PATH = "extra_base_layout_path";
+	public static final String EXTRA_IS_BUILTIN_BASE = "extra_is_builtin_base";
+
 	private DrawerLayout mDrawerLayout;
 	private ListView mDrawerNavigationView;
 	private ControlLayout mControlLayout;
@@ -69,11 +72,28 @@ public class CustomControlsActivity extends BaseActivity implements EditorExitab
 			mDrawerLayout.closeDrawers();
 		});
 		mControlLayout.setModifiable(true);
+		String baseLayoutPath = getIntent() != null ? getIntent().getStringExtra(EXTRA_BASE_LAYOUT_PATH) : null;
+		final boolean isBuiltInBase = getIntent() != null && getIntent().getBooleanExtra(EXTRA_IS_BUILTIN_BASE, false);
+		final String pathToLoad = (baseLayoutPath != null && !baseLayoutPath.isEmpty())
+				? baseLayoutPath
+				: LauncherPreferences.PREF_DEFAULTCTRL_PATH;
 		try {
-			mControlLayout.loadLayout(LauncherPreferences.PREF_DEFAULTCTRL_PATH);
+			mControlLayout.loadLayout(pathToLoad);
+			if (isBuiltInBase || ControlLayout.isBuiltInLayoutName(mControlLayout.mLayoutFileName)) {
+				mControlLayout.mLayoutFileName = "";
+			}
 		}catch (IOException e) {
 			Tools.showError(this, e);
 		}
+		LauncherPreferences.computeNotchSize(this);
+		mControlLayout.post(() -> {
+			Tools.getDisplayMetrics(this);
+			if (mControlLayout.getWidth() > 0 && mControlLayout.getHeight() > 0) {
+				org.lwjgl.glfw.CallbackBridge.physicalWidth = mControlLayout.getWidth();
+				org.lwjgl.glfw.CallbackBridge.physicalHeight = mControlLayout.getHeight();
+			}
+			mControlLayout.refreshControlButtonPositions();
+		});
 	}
 
 	@Override

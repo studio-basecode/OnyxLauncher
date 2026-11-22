@@ -52,6 +52,7 @@ public class ControlLayout extends FrameLayout {
 	private boolean mModifiable = false;
 	private boolean mIsModified;
 	private boolean mControlVisible = false;
+	private boolean mPreviewMode = false;
 
 	private EditControlSideDialog mControlDialog = null;
 	private ControlHandleView mHandleView;
@@ -247,12 +248,23 @@ public class ControlLayout extends FrameLayout {
 		return mLayout;
 	}
 
+	public void setPreviewMode(boolean previewMode) {
+		mPreviewMode = previewMode;
+	}
+
+	public boolean isPreviewMode() {
+		return mPreviewMode;
+	}
+
 	public void setControlVisible(boolean isVisible) {
 		if (mModifiable) return; // Not using on custom controls activity
 
 		mControlVisible = isVisible;
 		for(ControlInterface button : getButtonChildren()){
-			button.setVisible(((button.getProperties().displayInGame && isGrabbing()) || (button.getProperties().displayInMenu && !isGrabbing())) && isVisible);
+			boolean showForState = mPreviewMode
+					|| (button.getProperties().displayInGame && isGrabbing())
+					|| (button.getProperties().displayInMenu && !isGrabbing());
+			button.setVisible(showForState && isVisible);
 		}
 	}
 
@@ -294,6 +306,16 @@ public class ControlLayout extends FrameLayout {
 		for(ControlInterface button : getButtonChildren()){
 			button.setDynamicX(button.getProperties().dynamicX);
 			button.setDynamicY(button.getProperties().dynamicY);
+		}
+	}
+
+	@Override
+	protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+		super.onSizeChanged(w, h, oldw, oldh);
+		if (w > 0 && h > 0) {
+			org.lwjgl.glfw.CallbackBridge.physicalWidth = w;
+			org.lwjgl.glfw.CallbackBridge.physicalHeight = h;
+			post(this::refreshControlButtonPositions);
 		}
 	}
 
@@ -465,23 +487,48 @@ public class ControlLayout extends FrameLayout {
 		return mGameSurface;
 	}
 
-	public void askToExit(EditorExitable editorExitable) {
-		if(mIsModified) {
-			openSaveDialog(editorExitable);
-		}else{
-			openExitDialog(editorExitable);
+	public static boolean isBuiltInLayoutName(String name) {
+		if (name == null) return false;
+		String cleaned = name.trim().toLowerCase(java.util.Locale.ROOT);
+		while (cleaned.startsWith(".") || cleaned.startsWith("/") || cleaned.startsWith("\\")) {
+			cleaned = cleaned.substring(1);
 		}
+		if (cleaned.endsWith(".json")) {
+			cleaned = cleaned.substring(0, cleaned.length() - 5);
+		}
+		return cleaned.equals("default")
+				|| cleaned.equals("onyx_modern_joystick")
+				|| cleaned.equals("onyx_modpack_quests")
+				|| cleaned.equals("onyx_pvp_claw")
+				|| cleaned.equals("onyx_bedrock_dpad")
+				|| cleaned.equals("onyx_minimal_clean");
+	}
+
+	public void askToExit(EditorExitable editorExitable) {
+		openSaveDialog(editorExitable);
 	}
 
 	public void updateLoadedFileName(String path) {
-		path = path.replace(Tools.CTRLMAP_PATH, ".");
-		path = path.substring(0, path.length() - 5);
-		mLayoutFileName = path;
+		if (path == null) {
+			mLayoutFileName = "";
+			return;
+		}
+		File file = new File(path);
+		String baseName = file.getName();
+		if (baseName.toLowerCase(java.util.Locale.ROOT).endsWith(".json")) {
+			baseName = baseName.substring(0, baseName.length() - 5);
+		}
+		mLayoutFileName = isBuiltInLayoutName(baseName) ? "" : baseName;
 	}
 
 	public String saveToDirectory(String name) throws Exception{
-		String jsonPath = Tools.CTRLMAP_PATH + "/" + name + ".json";
+		String cleanName = name == null ? "" : name.trim();
+		if (cleanName.toLowerCase(java.util.Locale.ROOT).endsWith(".json")) {
+			cleanName = cleanName.substring(0, cleanName.length() - 5);
+		}
+		String jsonPath = Tools.CTRLMAP_PATH + "/" + cleanName + ".json";
 		saveLayout(jsonPath);
+		mLayoutFileName = cleanName;
 		return jsonPath;
 	}
 
@@ -499,13 +546,18 @@ public class ControlLayout extends FrameLayout {
 		@Override
 		public void onClick(View v) {
 			Context context = v.getContext();
-			if (mEditText.getText().toString().isEmpty()) {
+			String enteredName = mEditText.getText() == null ? "" : mEditText.getText().toString().trim();
+			if (enteredName.isEmpty()) {
 				mEditText.setError(context.getString(R.string.global_error_field_empty));
 				return;
 			}
+			if (isBuiltInLayoutName(enteredName)) {
+				mEditText.setError(context.getString(R.string.controls_error_reserved_name));
+				return;
+			}
 			try {
-				String jsonPath = saveToDirectory(mEditText.getText().toString());
-				Toast.makeText(context, context.getString(R.string.global_save) + ": " + jsonPath, Toast.LENGTH_SHORT).show();
+				String jsonPath = saveToDirectory(enteredName);
+				Toast.makeText(context, context.getString(R.string.global_save) + ": " + enteredName, Toast.LENGTH_SHORT).show();
 				mDialog.dismiss();
 				if(mListener != null) mListener.exitEditor();
 			} catch (Throwable th) {
@@ -518,19 +570,33 @@ public class ControlLayout extends FrameLayout {
 		final Context context = getContext();
 		final EditText edit = new EditText(context);
 		edit.setSingleLine();
-		edit.setText(mLayoutFileName);
+		edit.setHint(R.string.controls_save_name_hint);
+		String prefill = isBuiltInLayoutName(mLayoutFileName) ? "" : (mLayoutFileName == null ? "" : mLayoutFileName);
+		edit.setText(prefill);
+		if (!prefill.isEmpty()) {
+			edit.setSelection(prefill.length());
+		}
+
+		int padH = (int) Tools.dpToPx(20);
+		int padV = (int) Tools.dpToPx(8);
+		FrameLayout container = new FrameLayout(context);
+		container.setPadding(padH, padV, padH, padV);
+		container.addView(edit);
 
 		AlertDialog.Builder builder = new AlertDialog.Builder(context);
-		builder.setTitle(R.string.global_save);
-		builder.setView(edit);
-		builder.setPositiveButton(android.R.string.ok, null);
-		builder.setNegativeButton(android.R.string.cancel, null);
-		if(editorExitable != null) builder.setNeutralButton(R.string.global_save_and_exit, null);
+		builder.setTitle(R.string.controls_save_dialog_title);
+		builder.setView(container);
+		if (editorExitable != null) {
+			builder.setPositiveButton(R.string.global_save, null);
+			builder.setNegativeButton(R.string.controls_dont_save, (d, w) -> editorExitable.exitEditor());
+			builder.setNeutralButton(android.R.string.cancel, null);
+		} else {
+			builder.setPositiveButton(R.string.global_save, null);
+			builder.setNegativeButton(android.R.string.cancel, null);
+		}
 		final AlertDialog dialog = builder.create();
 		dialog.setOnShowListener(dialogInterface -> {
 			dialog.getButton(AlertDialog.BUTTON_POSITIVE)
-					.setOnClickListener(new OnClickExitListener(dialog, edit, null));
-			if(editorExitable != null) dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
 					.setOnClickListener(new OnClickExitListener(dialog, edit, editorExitable));
 		});
 		dialog.show();

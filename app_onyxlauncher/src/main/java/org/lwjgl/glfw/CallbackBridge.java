@@ -22,6 +22,8 @@ public class CallbackBridge {
     private static final ArrayList<GrabListener> grabListeners = new ArrayList<>();
     // Use a weak reference here to avoid possibly statically referencing a Context.
     private static @Nullable WeakReference<DirectGamepadEnableHandler> sDirectGamepadEnableHandler;
+    private static volatile boolean sFirstFrameRendered = false;
+    private static @Nullable WeakReference<Runnable> sFirstFrameListener;
     
     public static final int CLIPBOARD_COPY = 2000;
     public static final int CLIPBOARD_PASTE = 2001;
@@ -183,6 +185,33 @@ public class CallbackBridge {
         DirectGamepadEnableHandler enableHandler = Tools.getWeakReference(sDirectGamepadEnableHandler);
         if(enableHandler != null) enableHandler.onDirectGamepadEnabled();
         sGamepadDirectInput = true;
+    }
+
+    //Called from JRE side on first OpenGL swapBuffers
+    @SuppressWarnings("unused")
+    @Keep
+    private static void onFirstFrameRendered() {
+        notifyFirstFrameRendered();
+    }
+
+    public static void notifyFirstFrameRendered() {
+        if (sFirstFrameRendered) return;
+        sFirstFrameRendered = true;
+        Runnable listener = Tools.getWeakReference(sFirstFrameListener);
+        if (listener != null) {
+            listener.run();
+        }
+    }
+
+    public static boolean hasFirstFrameRendered() {
+        return sFirstFrameRendered;
+    }
+
+    public static void setFirstFrameListener(@Nullable Runnable listener) {
+        sFirstFrameListener = listener != null ? new WeakReference<>(listener) : null;
+        if (listener != null && sFirstFrameRendered) {
+            listener.run();
+        }
     }
 
     //Called from JRE side

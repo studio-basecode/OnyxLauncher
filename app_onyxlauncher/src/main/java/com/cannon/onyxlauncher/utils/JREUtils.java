@@ -182,6 +182,14 @@ public class JREUtils {
 
         // Prevent OptiFine (and other error-reporting stuff in Minecraft) from balooning the log
         envMap.put("LIBGL_NOERROR", "1");
+        envMap.put("LIBGL_SILENTSTUB", "1");
+        envMap.put("LIBGL_NOBANNER", "1");
+        envMap.put("LIBGL_SKIPTEXCOPIES", "1");
+        envMap.put("LIBGL_FASTMATH", "1");
+        envMap.put("LIBGL_VGPU_OPT", "1");
+        File gl4esShaderCache = new File(Tools.DIR_CACHE, "gl4es_shader_cache");
+        if (!gl4esShaderCache.exists()) gl4esShaderCache.mkdirs();
+        envMap.put("LIBGL_PSA_FOLDER", gl4esShaderCache.getAbsolutePath());
         envMap.put("LIBGL_CUSTOMVERSION", "3.3.0"); // Custom GL version for Iris shader compatibility
 
         // On certain GLES drivers, overloading default functions shader hack fails, so disable it
@@ -341,8 +349,10 @@ public class JREUtils {
         purgeArg(userArgs, "-XX:ActiveProcessorCount");
 
         //Add automatically generated args
-        userArgs.add("-Xms" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
-        userArgs.add("-Xmx" + LauncherPreferences.PREF_RAM_ALLOCATION + "M");
+        int maxRamMb = Math.min(LauncherPreferences.PREF_RAM_ALLOCATION, 4096);
+        int initRamMb = Math.min(maxRamMb, maxRamMb >= 3840 ? 2048 : 1536);
+        userArgs.add("-Xms" + initRamMb + "M");
+        userArgs.add("-Xmx" + maxRamMb + "M");
         if(LOCAL_RENDERER != null) userArgs.add("-Dorg.lwjgl.opengl.libname=" + graphicsLib);
 
         // Force LWJGL to use the Freetype library intended for it, instead of using the one
@@ -362,25 +372,16 @@ public class JREUtils {
         chdir(gameDirectory == null ? Tools.DIR_GAME_NEW : gameDirectory.getAbsolutePath());
         userArgs.add(0,"java"); //argv[0] is the program name according to C standard.
 
-        // Clean up any Pojav / Onyx environment variables that might trigger Sodium's PojavLauncher block/crash.
+        // Clean up any Pojav environment variables that might trigger Sodium's PojavLauncher block/crash,
+        // while preserving ONYX_* variables needed by native C bridges (egl_bridge.c / egl_loader.c).
         try {
             android.system.Os.unsetenv("POJAV_RENDERER");
-            android.system.Os.unsetenv("POJAV_NATIVEDIR");
             android.system.Os.unsetenv("POJAV_VSYNC_IN_ZINK");
             android.system.Os.unsetenv("POJAV_EMUI_ITERATOR_MITIGATE");
             android.system.Os.unsetenv("POJAV_FFMPEG_PATH");
             android.system.Os.unsetenv("POJAV_BIG_CORE_AFFINITY");
             android.system.Os.unsetenv("POJAV_LOAD_TURNIP");
             android.system.Os.unsetenv("POJAVEXEC_EGL");
-
-            android.system.Os.unsetenv("ONYX_RENDERER");
-            android.system.Os.unsetenv("ONYX_NATIVEDIR");
-            android.system.Os.unsetenv("ONYX_VSYNC_IN_ZINK");
-            android.system.Os.unsetenv("ONYX_EMUI_ITERATOR_MITIGATE");
-            android.system.Os.unsetenv("ONYX_FFMPEG_PATH");
-            android.system.Os.unsetenv("ONYX_BIG_CORE_AFFINITY");
-            android.system.Os.unsetenv("ONYX_LOAD_TURNIP");
-            android.system.Os.unsetenv("ONYXEXEC_EGL");
         } catch (Exception e) {
             Log.e("JREUtils", "Failed to unset environment variables", e);
         }

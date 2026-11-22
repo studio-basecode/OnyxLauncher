@@ -123,11 +123,25 @@ public class ModIconCache {
             return null;
         }
         try {
+            android.graphics.Bitmap bmp = android.graphics.BitmapFactory.decodeFile(imagePath.getAbsolutePath());
+            if (bmp != null) {
+                int maxSize = 128;
+                if (bmp.getWidth() > maxSize || bmp.getHeight() > maxSize) {
+                    float scale = Math.min((float) maxSize / bmp.getWidth(), (float) maxSize / bmp.getHeight());
+                    int targetW = Math.max(1, Math.round(bmp.getWidth() * scale));
+                    int targetH = Math.max(1, Math.round(bmp.getHeight() * scale));
+                    android.graphics.Bitmap scaled = android.graphics.Bitmap.createScaledBitmap(bmp, targetW, targetH, true);
+                    if (scaled != bmp) bmp.recycle();
+                    bmp = scaled;
+                }
+                java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, baos);
+                bmp.recycle();
+                return "data:image/png;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+            }
             try(FileInputStream fileInputStream = new FileInputStream(imagePath)) {
                 byte[] imageBytes = IOUtils.toByteArray(fileInputStream);
-                // reencode to png? who cares! our profile icon cache is an omnivore!
-                // if some other launcher parses this and dies it is not our problem :troll:
-                return "data:image/png;base64,"+ Base64.encodeToString(imageBytes, Base64.DEFAULT);
+                return "data:image/png;base64,"+ Base64.encodeToString(imageBytes, Base64.NO_WRAP);
             }
         }catch (IOException e) {
             e.printStackTrace();

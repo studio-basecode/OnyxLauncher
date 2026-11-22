@@ -38,8 +38,10 @@ import android.webkit.MimeTypeMap;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
+import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 import androidx.annotation.RequiresApi;
@@ -74,6 +76,8 @@ import org.lwjgl.glfw.CallbackBridge;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 
 public class MainActivity extends BaseActivity implements ControlButtonMenuListener, EditorExitable, ServiceConnection {
     public static volatile ClipboardManager GLOBAL_CLIPBOARD;
@@ -99,8 +103,15 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     public ArrayAdapter<String> ingameControlsEditorArrayAdapter;
     public AdapterView.OnItemClickListener ingameControlsEditorListener;
     private GameService.LocalBinder mServiceBinder;
+    private boolean mIsBound = false;
 
     private QuickSettingSideDialog mQuickSettingSideDialog;
+    private View mStartupOverlay;
+    private TextView mStartupStatusText;
+    private final Handler mStartupStatusHandler = new Handler(Looper.getMainLooper());
+    private Runnable mStartupStatusRunnable;
+    private final Runnable mFirstFrameListener = () -> runOnUiThread(this::hideStartupOverlay);
+    private volatile boolean mIsDestroyed = false;
 
     // --- Playtime tracking ---
     private static final String PREFS_ONYX_DATA = "OnyxData";
@@ -112,9 +123,18 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        LauncherPreferences.loadPreferences(getApplicationContext());
+        LauncherProfiles.load();
         minecraftProfile = LauncherProfiles.getCurrentProfile();
         LauncherPreferences.applyProfileOverrides(minecraftProfile);
         MCOptionUtils.load(Tools.getGameDirPath(minecraftProfile).getAbsolutePath());
+
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleBackNavigation();
+            }
+        });
 
         Intent gameServiceIntent = new Intent(this, GameService.class);
         // Start the service a bit early
@@ -122,6 +142,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         initLayout(R.layout.activity_basemain);
         CallbackBridge.addGrabListener(touchpad);
         CallbackBridge.addGrabListener(minecraftGLView);
+        CallbackBridge.setFirstFrameListener(mFirstFrameListener);
 
         mGyroControl = new GyroControl(this);
 
@@ -129,9 +150,9 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         if(PREF_USE_ALTERNATE_SURFACE) getWindow().setBackgroundDrawable(null);
         else getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
 
-        // Set the sustained performance mode for available APIs
+        // Disable sustained performance throttling so CPU/GPU boost clocks remain available
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
-            getWindow().setSustainedPerformanceMode(PREF_SUSTAINED_PERFORMANCE);
+            getWindow().setSustainedPerformanceMode(false);
 
         ingameControlsEditorArrayAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_list_item_1, getResources().getStringArray(R.array.menu_customcontrol));
@@ -156,7 +177,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         // execute the correct method
         ContextExecutor.setActivity(this);
         //Now, attach to the service. The game will only start when this happens, to make sure that we know the right state.
-        bindService(gameServiceIntent, this, 0);
+        mIsBound = bindService(gameServiceIntent, this, 0);
     }
 
     protected void initLayout(int resId) {
@@ -176,9 +197,11 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
             GLOBAL_CLIPBOARD = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
             touchCharInput.setCharacterSender(new LwjglCharSender());
 
-            if(minecraftProfile.pojavRendererName != null) {
+            if(minecraftProfile.pojavRendererName != null && !minecraftProfile.pojavRendererName.isEmpty()) {
                 Log.i("RdrDebug","__P_renderer="+minecraftProfile.pojavRendererName);
                 Tools.LOCAL_RENDERER = minecraftProfile.pojavRendererName;
+            } else {
+                Tools.LOCAL_RENDERER = LauncherPreferences.PREF_RENDERER;
             }
 
             setTitle("Minecraft " + minecraftProfile.lastVersionId);
@@ -193,8 +216,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
             CallbackBridge.nativeSetUseInputStackQueue(isInputStackCall);
 
             Tools.getDisplayMetrics(this);
-            windowWidth = Tools.getDisplayFriendlyRes(currentDisplayMetrics.widthPixels, 1f);
-            windowHeight = Tools.getDisplayFriendlyRes(currentDisplayMetrics.heightPixels, 1f);
+            windowWidth = Tools.getDisplayFriendlyRes(currentDisplayMetrics.widthPixels, LauncherPreferences.PREF_SCALE_FACTOR);
+            windowHeight = Tools.getDisplayFriendlyRes(currentDisplayMetrics.heightPixels, LauncherPreferences.PREF_SCALE_FACTOR);
 
 
             // Menu
@@ -277,6 +300,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         touchCharInput = findViewById(R.id.mainTouchCharInput);
         mDrawerPullButton = findViewById(R.id.drawer_button);
         mHotbarView = findViewById(R.id.hotbar_view);
+        mStartupOverlay = findViewById(R.id.main_startup_overlay);
+        mStartupStatusText = findViewById(R.id.main_startup_status);
     }
 
     @Override
@@ -313,7 +338,17 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     @Override
     protected void onDestroy() {
+        mIsDestroyed = true;
+        mStartupStatusHandler.removeCallbacksAndMessages(null);
+        CallbackBridge.setFirstFrameListener(null);
         super.onDestroy();
+        if (mIsBound) {
+            try {
+                unbindService(this);
+            } catch (Exception ignored) {
+            }
+            mIsBound = false;
+        }
         stopPlaytimeTracking();
         CallbackBridge.removeGrabListener(touchpad);
         CallbackBridge.removeGrabListener(minecraftGLView);
@@ -503,26 +538,52 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     public static void toggleMouse(Context ctx) {
         if (CallbackBridge.isGrabbing()) return;
+        if (touchpad == null) return;
 
         Toast.makeText(ctx, touchpad.switchState()
                         ? R.string.control_mouseon : R.string.control_mouseoff,
                 Toast.LENGTH_SHORT).show();
     }
 
+    private void handleBackNavigation() {
+        if (drawerLayout != null && navDrawer != null && drawerLayout.isDrawerOpen(navDrawer)) {
+            drawerLayout.closeDrawers();
+            return;
+        }
+        if (isInEditor) {
+            if (mControlLayout != null) mControlLayout.askToExit(this);
+            return;
+        }
+        if (touchCharInput != null && touchCharInput.isEnabled()) {
+            touchCharInput.switchKeyboardState();
+            sendKeyPress(LwjglGlfwKeycode.GLFW_KEY_ESCAPE);
+            return;
+        }
+        sendKeyPress(LwjglGlfwKeycode.GLFW_KEY_ESCAPE);
+    }
+
+    @Override
+    @SuppressWarnings("deprecation")
+    public void onBackPressed() {
+        handleBackNavigation();
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if(isInEditor) {
-            if(event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-                if(event.getAction() == KeyEvent.ACTION_DOWN) mControlLayout.askToExit(this);
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            boolean isMouseRightClick = event.getDevice() != null &&
+                    ((event.getSource() & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE ||
+                     (event.getSource() & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE);
+            if (!isMouseRightClick) {
+                if (event.getAction() == KeyEvent.ACTION_UP && (event.getFlags() & KeyEvent.FLAG_CANCELED) == 0) {
+                    handleBackNavigation();
+                }
                 return true;
             }
-            return super.dispatchKeyEvent(event);
         }
         boolean handleEvent;
-        if(!(handleEvent = minecraftGLView.processKeyEvent(event))) {
-            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !touchCharInput.isEnabled()) {
-                if(event.getAction() != KeyEvent.ACTION_UP) return true; // We eat it anyway
-                sendKeyPress(LwjglGlfwKeycode.GLFW_KEY_ESCAPE);
+        if (!(handleEvent = minecraftGLView.processKeyEvent(event))) {
+            if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
                 return true;
             }
         }
@@ -630,8 +691,73 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     public void onServiceConnected(ComponentName name, IBinder service) {
         GameService.LocalBinder localBinder = (GameService.LocalBinder) service;
         mServiceBinder = localBinder;
+        if (!localBinder.isActive && !CallbackBridge.hasFirstFrameRendered()) {
+            showStartupOverlay();
+        } else {
+            hideStartupOverlay();
+        }
         minecraftGLView.start(localBinder.isActive, touchpad);
         localBinder.isActive = true;
+    }
+
+    private void showStartupOverlay() {
+        if (mStartupOverlay == null || mIsDestroyed) return;
+        mStartupOverlay.setVisibility(View.VISIBLE);
+        if (mStartupStatusRunnable != null) {
+            mStartupStatusHandler.removeCallbacks(mStartupStatusRunnable);
+        }
+        final File logFile = new File(Tools.DIR_GAME_HOME, "latestlog.txt");
+        mStartupStatusRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mIsDestroyed || isFinishing() || mStartupOverlay == null || mStartupOverlay.getVisibility() != View.VISIBLE) {
+                    return;
+                }
+                if (CallbackBridge.hasFirstFrameRendered()) {
+                    hideStartupOverlay();
+                    return;
+                }
+                OnyxApplication.sExecutorService.execute(() -> {
+                    final String lastLine = readLastNonEmptyLogLine(logFile);
+                    if (mIsDestroyed || isFinishing() || lastLine == null || lastLine.isEmpty()) return;
+                    runOnUiThread(() -> {
+                        if (!mIsDestroyed && mStartupStatusText != null && mStartupOverlay != null && mStartupOverlay.getVisibility() == View.VISIBLE) {
+                            mStartupStatusText.setText(getString(R.string.startup_overlay_current_task, lastLine));
+                        }
+                    });
+                });
+                mStartupStatusHandler.postDelayed(this, 750);
+            }
+        };
+        mStartupStatusHandler.postDelayed(mStartupStatusRunnable, 750);
+    }
+
+    private void hideStartupOverlay() {
+        mStartupStatusHandler.removeCallbacksAndMessages(null);
+        if (mStartupOverlay != null) {
+            mStartupOverlay.setVisibility(View.GONE);
+        }
+    }
+
+    private static String readLastNonEmptyLogLine(File logFile) {
+        if (!logFile.exists() || logFile.length() == 0) return null;
+        try (RandomAccessFile raf = new RandomAccessFile(logFile, "r")) {
+            long len = raf.length();
+            int bytesToRead = (int) Math.min(4096, len);
+            raf.seek(len - bytesToRead);
+            byte[] buf = new byte[bytesToRead];
+            raf.readFully(buf);
+            String chunk = new String(buf, StandardCharsets.UTF_8);
+            String[] lines = chunk.split("\\r?\\n");
+            for (int i = lines.length - 1; i >= 0; i--) {
+                String trimmed = lines[i].trim();
+                if (!trimmed.isEmpty()) {
+                    return trimmed;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     @Override

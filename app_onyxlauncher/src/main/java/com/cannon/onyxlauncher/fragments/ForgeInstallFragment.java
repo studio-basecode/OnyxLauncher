@@ -58,7 +58,9 @@ public class ForgeInstallFragment extends ModVersionListFragment<List<String>> {
     @Override
     public void onDownloadFinished(Context context, File downloadedFile) {
         Intent modInstallerStartIntent = new Intent(context, JavaGUILauncherActivity.class);
-        ForgeUtils.addAutoInstallArgs(modInstallerStartIntent, downloadedFile, true);
+        // Forge's supported CLI works for legacy and modern installers alike.  The
+        // old java-agent route does not reliably create the version JSON on Java 17+.
+        ForgeUtils.addCliInstallArgs(modInstallerStartIntent, downloadedFile, Tools.DIR_GAME_NEW);
         context.startActivity(modInstallerStartIntent);
     }
 }

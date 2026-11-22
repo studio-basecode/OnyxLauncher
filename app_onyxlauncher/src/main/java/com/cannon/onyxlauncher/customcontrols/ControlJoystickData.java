@@ -19,4 +19,10 @@ public class ControlJoystickData extends ControlData {
         forwardLock = properties.forwardLock;
         absolute = properties.absolute;
     }
+
+    public ControlJoystickData(ControlData properties, boolean forwardLock, boolean absolute) {
+        super(properties);
+        this.forwardLock = forwardLock;
+        this.absolute = absolute;
+    }
 }

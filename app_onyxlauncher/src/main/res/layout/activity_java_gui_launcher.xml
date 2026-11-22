@@ -48,6 +48,66 @@
 
 		</LinearLayout>
 
+		<LinearLayout
+			android:id="@+id/installmod_wait_overlay"
+			android:layout_width="0dp"
+			android:layout_height="wrap_content"
+			android:layout_marginStart="48dp"
+			android:layout_marginEnd="48dp"
+			android:background="@drawable/background_wait_overlay"
+			android:clickable="false"
+			android:focusable="false"
+			android:gravity="center_horizontal"
+			android:orientation="vertical"
+			android:padding="24dp"
+			android:visibility="gone"
+			app:layout_constraintBottom_toBottomOf="parent"
+			app:layout_constraintEnd_toEndOf="parent"
+			app:layout_constraintStart_toStartOf="parent"
+			app:layout_constraintTop_toTopOf="parent"
+			app:layout_constraintWidth_max="480dp">
+
+			<ProgressBar
+				android:layout_width="48dp"
+				android:layout_height="48dp"
+				android:indeterminate="true" />
+
+			<TextView
+				android:id="@+id/installmod_wait_title"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="14dp"
+				android:gravity="center"
+				android:text="@string/installer_overlay_title"
+				android:textColor="#FFFFFF"
+				android:textSize="18sp"
+				android:textStyle="bold" />
+
+			<TextView
+				android:id="@+id/installmod_wait_desc"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="10dp"
+				android:gravity="center"
+				android:text="@string/installer_overlay_subtitle"
+				android:textColor="#CBD5E1"
+				android:textSize="13sp" />
+
+			<TextView
+				android:id="@+id/installmod_wait_status"
+				android:layout_width="match_parent"
+				android:layout_height="wrap_content"
+				android:layout_marginTop="14dp"
+				android:ellipsize="end"
+				android:fontFamily="monospace"
+				android:gravity="center"
+				android:maxLines="2"
+				android:text="@string/installer_overlay_initial_status"
+				android:textColor="#818CF8"
+				android:textSize="12sp" />
+
+		</LinearLayout>
+
 		<Button
 			android:id="@+id/installmod_btn2"
 			android:layout_width="wrap_content"

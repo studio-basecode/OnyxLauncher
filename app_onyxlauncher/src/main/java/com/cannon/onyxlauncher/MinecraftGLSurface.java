@@ -118,6 +118,7 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
                 @Override
                 public void surfaceCreated(@NonNull SurfaceHolder holder) {
                     if(isCalled) {
+                        refreshSize(true);
                         JREUtils.setupBridgeWindow(surfaceView.getHolder().getSurface());
                         return;
                     }
@@ -148,6 +149,7 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
                 public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surface, int width, int height) {
                     Surface tSurface = new Surface(surface);
                     if(isCalled) {
+                        refreshSize(true);
                         JREUtils.setupBridgeWindow(tSurface);
                         return;
                     }
@@ -167,7 +169,11 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
                 }
 
                 @Override
-                public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {}
+                public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surface) {
+                    if (!CallbackBridge.hasFirstFrameRendered()) {
+                        CallbackBridge.notifyFirstFrameRendered();
+                    }
+                }
             });
 
             ((ViewGroup)getParent()).addView(textureView);

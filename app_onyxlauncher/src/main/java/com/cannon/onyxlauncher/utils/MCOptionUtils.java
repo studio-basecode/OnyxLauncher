@@ -39,7 +39,7 @@ public class MCOptionUtils {
                 : sOptionFolderPath);
     }
 
-    public static void load(@NonNull String folderPath) {
+    public static synchronized void load(@NonNull String folderPath) {
         File optionFile = new File(folderPath + "/options.txt");
         if(!optionFile.exists()) {
             try { // Needed for new instances I guess  :think:
@@ -72,16 +72,16 @@ public class MCOptionUtils {
         }
     }
 
-    public static void set(String key, String value) {
+    public static synchronized void set(String key, String value) {
         sParameterMap.put(key,value);
     }
 
     /** Set an array of String, instead of a simple value. Not supported on all options */
-    public static void set(String key, List<String> values){
+    public static synchronized void set(String key, List<String> values){
         sParameterMap.put(key, values.toString());
     }
 
-    public static String get(String key){
+    public static synchronized String get(String key){
         return sParameterMap.get(key);
     }
 
@@ -99,7 +99,7 @@ public class MCOptionUtils {
         return Arrays.asList(value.split(","));
     }
 
-    public static void save() {
+    public static synchronized void save() {
         StringBuilder result = new StringBuilder();
         for(String key : sParameterMap.keySet())
             result.append(key)
@@ -108,9 +108,9 @@ public class MCOptionUtils {
                     .append('\n');
 
         try {
-            sFileObserver.stopWatching();
+            if (sFileObserver != null) sFileObserver.stopWatching();
             Tools.write(sOptionFolderPath + "/options.txt", result.toString());
-            sFileObserver.startWatching();
+            if (sFileObserver != null) sFileObserver.startWatching();
         } catch (IOException e) {
             Log.w(Tools.APP_NAME, "Could not save options.txt", e);
         }
@@ -119,7 +119,14 @@ public class MCOptionUtils {
     /** @return The stored Minecraft GUI scale, also auto-computed if on auto-mode or improper setting */
     public static int getMcScale() {
         String str = MCOptionUtils.get("guiScale");
-        int guiScale = (str == null ? 0 :Integer.parseInt(str));
+        int guiScale = 0;
+        if (str != null && !str.trim().isEmpty()) {
+            try {
+                guiScale = Integer.parseInt(str.trim());
+            } catch (NumberFormatException ignored) {
+                guiScale = 0;
+            }
+        }
 
         int scale = Math.max(Math.min(windowWidth / 320, windowHeight / 240), 1);
         if(scale < guiScale || guiScale == 0){

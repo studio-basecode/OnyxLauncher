@@ -26,6 +26,7 @@
         android:extractNativeLibs="true"
         android:allowBackup="true"
         android:allowNativeHeapPointerTagging="false"
+        android:enableOnBackInvokedCallback="false"
         android:appCategory="game"
         android:hasFragileUserData="true"
         android:icon="@mipmap/ic_launcher"
@@ -106,9 +107,14 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ControlPreviewActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape" />
+        <activity
             android:name=".MainActivity"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout|keyboard|navigation|uiMode"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:process=":game"
             android:screenOrientation="sensorLandscape" />
 

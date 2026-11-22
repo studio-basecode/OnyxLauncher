@@ -263,10 +263,44 @@ public class MinecraftDownloader {
             // e.g. an inherited vanilla version like 1.21.1 for Fabric), try to fetch it from
             // the Mojang version manifest so it can be downloaded automatically.
             if(!versionJsonFile.canRead() || !versionJsonFile.isFile()) {
-                Log.i("NewMCDownloader", "Version " + versionName + " not in release table, fetching from manifest");
-                verInfo = fetchVersionInfoFromManifest(versionName);
-                if(verInfo != null) {
-                    versionJsonFile = downloadGameJson(verInfo);
+                if (versionName.startsWith("fabric-loader-")) {
+                    String rest = versionName.substring("fabric-loader-".length());
+                    int lastDash = rest.lastIndexOf('-');
+                    if (lastDash > 0) {
+                        String loaderVer = rest.substring(0, lastDash);
+                        String gameVer = rest.substring(lastDash + 1);
+                        String url = String.format("https://meta.fabricmc.net/v2/versions/loader/%s/%s/profile/json", gameVer, loaderVer);
+                        Log.i("NewMCDownloader", "Downloading missing Fabric version JSON from " + url);
+                        try {
+                            String jsonContent = com.cannon.onyxlauncher.utils.DownloadUtils.downloadString(url);
+                            FileUtils.ensureParentDirectory(versionJsonFile);
+                            Tools.write(versionJsonFile.getAbsolutePath(), jsonContent);
+                        } catch (Exception e) {
+                            Log.e("NewMCDownloader", "Failed to download Fabric version JSON", e);
+                        }
+                    }
+                } else if (versionName.startsWith("quilt-loader-")) {
+                    String rest = versionName.substring("quilt-loader-".length());
+                    int lastDash = rest.lastIndexOf('-');
+                    if (lastDash > 0) {
+                        String loaderVer = rest.substring(0, lastDash);
+                        String gameVer = rest.substring(lastDash + 1);
+                        String url = String.format("https://meta.quiltmc.org/v3/versions/loader/%s/%s/profile/json", gameVer, loaderVer);
+                        Log.i("NewMCDownloader", "Downloading missing Quilt version JSON from " + url);
+                        try {
+                            String jsonContent = com.cannon.onyxlauncher.utils.DownloadUtils.downloadString(url);
+                            FileUtils.ensureParentDirectory(versionJsonFile);
+                            Tools.write(versionJsonFile.getAbsolutePath(), jsonContent);
+                        } catch (Exception e) {
+                            Log.e("NewMCDownloader", "Failed to download Quilt version JSON", e);
+                        }
+                    }
+                } else {
+                    Log.i("NewMCDownloader", "Version " + versionName + " not in release table, fetching from manifest");
+                    verInfo = fetchVersionInfoFromManifest(versionName);
+                    if(verInfo != null) {
+                        versionJsonFile = downloadGameJson(verInfo);
+                    }
                 }
             }
         }

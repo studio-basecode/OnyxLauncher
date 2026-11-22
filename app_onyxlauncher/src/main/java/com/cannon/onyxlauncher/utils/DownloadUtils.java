@@ -15,7 +15,7 @@ import org.apache.commons.io.*;
 @SuppressWarnings("IOStreamConstructor")
 public class DownloadUtils {
     public static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) OnyxLauncher/1.0";
-    private static final int TIME_OUT = 15000;
+    private static final int TIME_OUT = 30000;
 
     public static URL normalizeUrl(String url) throws MalformedURLException {
         if (url == null) throw new MalformedURLException("URL is null");
@@ -103,6 +103,7 @@ public class DownloadUtils {
     public static void downloadFileMonitored(String urlInput, File outputFile, @Nullable byte[] buffer,
                                              Tools.DownloaderFeedback monitor) throws IOException {
         FileUtils.ensureParentDirectory(outputFile);
+        File partFile = new File(outputFile.getParentFile(), outputFile.getName() + ".part." + Thread.currentThread().getId());
 
         URL currentUrl = normalizeUrl(urlInput);
         HttpURLConnection conn = null;
@@ -139,11 +140,10 @@ public class DownloadUtils {
             }
 
             readStr = conn.getInputStream();
-            try (FileOutputStream fos = new FileOutputStream(outputFile)) {
+            int overall = 0;
+            int length = conn.getContentLength();
+            try (FileOutputStream fos = new FileOutputStream(partFile)) {
                 int current;
-                int overall = 0;
-                int length = conn.getContentLength();
-
                 if (buffer == null) buffer = new byte[65535];
 
                 while ((current = readStr.read(buffer)) != -1) {
@@ -153,8 +153,30 @@ public class DownloadUtils {
                         monitor.updateProgress(overall, length);
                     }
                 }
+                fos.flush();
+            }
+
+            if (length > 0 && overall < length) {
+                throw new IOException("Incomplete download (" + overall + "/" + length + " bytes) from " + urlInput);
+            }
+            if (isZipArchiveName(outputFile.getName()) && !isValidZipArchive(partFile)) {
+                throw new IOException("Downloaded archive is corrupted (missing ZIP END header): " + outputFile.getName());
+            }
+
+            if (outputFile.exists() && !outputFile.delete()) {
+                Log.w("DownloadUtils", "Could not delete existing file before rename: " + outputFile);
+            }
+            if (!partFile.renameTo(outputFile)) {
+                try (FileInputStream fis = new FileInputStream(partFile);
+                     FileOutputStream fos = new FileOutputStream(outputFile)) {
+                    IOUtils.copy(fis, fos);
+                }
+                partFile.delete();
             }
         } catch (IOException e) {
+            if (partFile.exists()) {
+                partFile.delete();
+            }
             throw new IOException("Unable to download from " + urlInput, e);
         } finally {
             if (readStr != null) {
@@ -167,6 +189,41 @@ public class DownloadUtils {
                     conn.disconnect();
                 } catch (Exception ignored) {}
             }
+        }
+    }
+
+    private static boolean isZipArchiveName(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".jar") || lower.endsWith(".zip") || lower.endsWith(".mrpack");
+    }
+
+    public static boolean isValidZipArchive(File file) {
+        if (file == null || !file.isFile() || file.length() < 22) return false;
+        try (RandomAccessFile raf = new RandomAccessFile(file, "r")) {
+            long len = raf.length();
+            if (len < 22) return false;
+            // Verify ZIP local file header magic PK\x03\x04 (or empty archive PK\x05\x06)
+            int b0 = raf.read();
+            int b1 = raf.read();
+            int b2 = raf.read();
+            int b3 = raf.read();
+            if (b0 != 0x50 || b1 != 0x4B) return false;
+            if (!((b2 == 0x03 && b3 == 0x04) || (b2 == 0x05 && b3 == 0x06))) return false;
+
+            // Search for ZIP End of Central Directory (EOCD) signature PK\x05\x06 in the last 65557 bytes
+            int tailSize = (int) Math.min(len, 65557L);
+            byte[] tail = new byte[tailSize];
+            raf.seek(len - tailSize);
+            raf.readFully(tail);
+            for (int i = tailSize - 22; i >= 0; i--) {
+                if (tail[i] == 0x50 && tail[i + 1] == 0x4B && tail[i + 2] == 0x05 && tail[i + 3] == 0x06) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -220,15 +277,22 @@ public class DownloadUtils {
     }
 
     private static boolean verifyFile(File file, String sha1) {
-        return file.exists() && Tools.compareSHA1(file, sha1);
+        if (!file.exists()) return false;
+        if (isZipArchiveName(file.getName()) && !isValidZipArchive(file)) return false;
+        return Tools.compareSHA1(file, sha1);
     }
 
     public static <T> T ensureSha1(File outputFile, @Nullable String sha1, Callable<T> downloadFunction) throws IOException {
         // Skip if needed (treat null or empty/blank sha1 as unverified)
         if(sha1 == null || sha1.trim().isEmpty()) {
-            // If the file exists and we don't know it's SHA1, don't try to redownload it.
-            if(outputFile.exists()) return null;
-            else return downloadFile(downloadFunction);
+            // If the file exists and is valid, don't try to redownload it.
+            if(outputFile.exists()) {
+                if (!isZipArchiveName(outputFile.getName()) || isValidZipArchive(outputFile)) {
+                    return null;
+                }
+                outputFile.delete();
+            }
+            return downloadFile(downloadFunction);
         }
 
         int attempts = 0;
@@ -239,7 +303,12 @@ public class DownloadUtils {
             downloadFile(downloadFunction);
             fileOkay = verifyFile(outputFile, sha1);
         }
-        if(!fileOkay) throw new SHA1VerificationException("SHA1 verification failed after 5 download attempts for " + outputFile.getName());
+        if(!fileOkay) {
+            if (outputFile.exists()) {
+                outputFile.delete();
+            }
+            throw new SHA1VerificationException("SHA1 verification failed after 5 download attempts for " + outputFile.getName());
+        }
         return result;
     }
 

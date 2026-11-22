@@ -77,6 +77,8 @@ import org.apache.commons.io.IOUtils;
 import org.lwjgl.glfw.CallbackBridge;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -93,10 +95,15 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 
@@ -108,7 +115,7 @@ public final class Tools {
 
     public static final Gson GLOBAL_GSON = new GsonBuilder().setPrettyPrinting().create();
 
-    public static final String URL_HOME = "https://github.com/cannon/onyxlauncher";
+    public static final String URL_HOME = "https://studiobasecode.com";
     public static String NATIVE_LIB_DIR;
     public static String DIR_DATA; //Initialized later to get context
     public static File DIR_CACHE;
@@ -336,6 +343,7 @@ public final class Tools {
             sanitizeIncompatibleGLESMods(gamedir);
         }
         disableSplash(gamedir);
+        applyMobilePerformanceOptimizations(gamedir);
         applyLithiumCompatPatch(gamedir);
         applySodiumCompatPatch(gamedir);
         applyModMixinCompatPatches(gamedir);
@@ -349,11 +357,55 @@ public final class Tools {
 
         String launchClassPath = generateLaunchClassPath(versionInfo, versionId);
 
+        String args = LauncherPreferences.PREF_CUSTOM_JAVA_ARGS;
+        if(Tools.isValidString(minecraftProfile.javaArgs)) args = minecraftProfile.javaArgs;
+
         List<String> javaArgList = new ArrayList<>();
 
-        // Add universal SpongePowered Mixin LVT compatibility flags for Android JDK 21
+        // Add tuned G1GC performance flags for modded Minecraft unless user overrode GC
+        boolean hasCustomGc = Tools.isValidString(args) && (
+                args.contains("UseZGC") || args.contains("UseShenandoahGC") ||
+                args.contains("UseSerialGC") || args.contains("UseParallelGC") ||
+                args.contains("UseConcMarkSweepGC")
+        );
+        if (!hasCustomGc) {
+            javaArgList.add("-XX:+UseG1GC");
+            javaArgList.add("-XX:+ParallelRefProcEnabled");
+            javaArgList.add("-XX:MaxGCPauseMillis=50");
+            javaArgList.add("-XX:+UnlockExperimentalVMOptions");
+            javaArgList.add("-XX:+DisableExplicitGC");
+            javaArgList.add("-XX:G1NewSizePercent=15");
+            javaArgList.add("-XX:G1ReservePercent=10");
+            javaArgList.add("-XX:G1HeapRegionSize=16M");
+            javaArgList.add("-XX:G1MixedGCCountTarget=4");
+            javaArgList.add("-XX:InitiatingHeapOccupancyPercent=15");
+            javaArgList.add("-XX:G1MixedGCLiveThresholdPercent=90");
+            javaArgList.add("-XX:SurvivorRatio=32");
+            javaArgList.add("-XX:+PerfDisableSharedMem");
+            javaArgList.add("-XX:+UseStringDeduplication");
+            javaArgList.add("-XX:+OptimizeStringConcat");
+            javaArgList.add("-XX:MaxHeapFreeRatio=25");
+            javaArgList.add("-XX:MinHeapFreeRatio=10");
+            javaArgList.add("-XX:ReservedCodeCacheSize=128M");
+            javaArgList.add("-XX:MaxMetaspaceSize=1024M");
+            javaArgList.add("-XX:+ClassUnloadingWithConcurrentMark");
+            javaArgList.add("-Xss512k");
+        }
+        javaArgList.add("-Djava.net.preferIPv4Stack=true");
+        javaArgList.add("-Dfml.readTimeout=180");
+
+        // Add universal SpongePowered Mixin & desktop simulation compatibility flags
         javaArgList.add("-Dmixin.env.disableLVTCheck=true");
         javaArgList.add("-Dmixin.checks.lvt=false");
+        javaArgList.add("-Dmixin.checks.interfaces=false");
+        javaArgList.add("-Dmixin.debug.export=false");
+        javaArgList.add("-Dmixin.ignoreErrors=true");
+        javaArgList.add("-Dfabric.skipMcVersionCheck=true");
+        javaArgList.add("-Dloader.skipMcVersionCheck=true");
+        javaArgList.add("-Dfml.earlyprogresswindow=false");
+        javaArgList.add("-Dfml.ignoreInvalidMinecraftCertificates=true");
+        javaArgList.add("-Dfml.ignorePatchDiscrepancies=true");
+        javaArgList.add("-Dforge.enableGameTest=false");
         javaArgList.add("-Dmixin.config.enchdesc.mixins.json.disabled=true");
 
         if (runtime.javaVersion <= 17) {
@@ -363,7 +415,12 @@ public final class Tools {
             javaArgList.add("--add-opens=java.base/java.util=ALL-UNNAMED");
             javaArgList.add("--add-opens=java.base/java.lang=ALL-UNNAMED");
             javaArgList.add("--add-opens=java.base/java.lang.reflect=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.lang.invoke=ALL-UNNAMED");
             javaArgList.add("--add-opens=java.base/java.io=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.nio=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/java.net=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/sun.security.action=ALL-UNNAMED");
+            javaArgList.add("--add-opens=java.base/sun.nio.ch=ALL-UNNAMED");
         }
 
         if (versionInfo.logging != null) {
@@ -388,8 +445,6 @@ public final class Tools {
         javaArgList.add(versionInfo.mainClass);
         javaArgList.addAll(Arrays.asList(launchArgs));
         // ctx.appendlnToLog("full args: "+javaArgList.toString());
-        String args = LauncherPreferences.PREF_CUSTOM_JAVA_ARGS;
-        if(Tools.isValidString(minecraftProfile.javaArgs)) args = minecraftProfile.javaArgs;
         FFmpegPlugin.discover(activity);
         JREUtils.launchJavaVM(activity, runtime, gamedir, javaArgList, args);
         // If we returned, this means that the JVM exit dialog has been shown and we don't need to be active anymore.
@@ -429,6 +484,25 @@ public final class Tools {
                 }
             } catch (IOException e) {
                 Log.w(Tools.APP_NAME, "Could not disable Forge 1.12.2 and below splash screen!", e);
+            }
+            File fmlTomlFile = new File(dir, "config/fml.toml");
+            try {
+                if (!fmlTomlFile.exists()) {
+                    Tools.write(fmlTomlFile.getAbsolutePath(), "earlyWindowControl = false\n");
+                } else {
+                    String fmlContent = Tools.read(fmlTomlFile.getAbsolutePath());
+                    String updatedFmlContent;
+                    if (!fmlContent.contains("earlyWindowControl")) {
+                        updatedFmlContent = fmlContent + "\nearlyWindowControl = false\n";
+                    } else {
+                        updatedFmlContent = fmlContent.replaceAll("earlyWindowControl\\s*=\\s*true", "earlyWindowControl = false");
+                    }
+                    if (!updatedFmlContent.equals(fmlContent)) {
+                        Tools.write(fmlTomlFile.getAbsolutePath(), updatedFmlContent);
+                    }
+                }
+            } catch (IOException e) {
+                Log.w(Tools.APP_NAME, "Could not disable Forge/NeoForge early window control in fml.toml!", e);
             }
         } else {
             Log.w(Tools.APP_NAME, "Failed to create the configuration directory");
@@ -677,30 +751,346 @@ public final class Tools {
 
         // Sodium and Iris chunk shaders rely on desktop OpenGL 4.5 integer vertex attributes (uvec2 a_Position)
         // which GL4ES / mobile GLES cannot render (causing all world blocks and terrain to be invisible).
-        // On GL4ES, automatically disable Sodium and Iris addon jars so vanilla Indigo rendering works with full textures.
+        // On GL4ES, automatically disable Sodium, Iris, and heavy client-only menu/visual bloat jars
+        // so vanilla/fallback rendering works smoothly without breaking multiplayer server compatibility.
         String[] incompatiblePatterns = new String[] {
             "sodium-fabric",
+            "sodium-neoforge",
+            "sodium-forge",
+            "embeddium",
+            "rubidium",
             "sodium-extra",
             "sodiumextras",
+            "sodiumdynamiclights",
             "sodiumleafculling",
             "sodiumoptionsapi",
             "sodium-shadowy-path-blocks",
             "reeses-sodium-options",
-            "iris-fabric"
+            "reeses_sodium_options",
+            "iris-fabric",
+            "iris-neoforge",
+            "iris-forge",
+            "iris-mc",
+            "oculus",
+            "mekalus",
+            "monocle",
+            "xenon",
+            "magnesium",
+            "chlorine",
+            "textrues_embeddium",
+            "embeddiumplus",
+            "embeddium_extra",
+            "rubidium_extra",
+            "fancymenu",
+            "drippyloadingscreen",
+            "panoramica",
+            "blur-",
+            "blur_",
+            "particlerain",
+            "prettyrain",
+            "visuality",
+            "effective",
+            "particular",
+            "sound-physics-remastered",
+            "sound_physics_remastered",
+            "soundphysics",
+            "presencefootsteps",
+            "ambientenvironment",
+            "euphoria_patches",
+            "euphoriapatcher",
+            "euphoria_patcher",
+            "cubes-without-borders",
+            "cubes_without_borders",
+            "entity_model_features",
+            "entity_texture_features",
+            "subtle_effects",
+            "subtleeffects",
+            "fallingleaves",
+            "falling_leaves",
+            "make_bubbles_pop",
+            "notenoughanimations",
+            "skinlayers3d",
+            "3dskinlayers",
+            "waveycapes",
+            "crashassistant",
+            "crash_assistant",
+            "memorysettings",
+            "memory_settings",
+            "darkmodeeverywhere",
+            "farsight",
+            "moreoverlays",
+            "betterf3",
+            "flickerfix"
         };
         File[] files = modsDir.listFiles();
         if (files == null) return;
         for (File f : files) {
             String name = f.getName().toLowerCase(Locale.ROOT);
+            if (name.endsWith(".disabled_gl4es") && (name.contains("immediatelyfast") || name.contains("watut") || name.contains("observable"))) {
+                String originalName = f.getName().substring(0, f.getName().length() - ".disabled_gl4es".length());
+                File restoredTarget = new File(modsDir, originalName);
+                if (!restoredTarget.exists() && f.renameTo(restoredTarget)) {
+                    Log.i(APP_NAME, "Re-enabled mod for multiplayer/mobile compatibility: " + originalName);
+                }
+                continue;
+            }
+            if (name.contains(".part.")) {
+                f.delete();
+                continue;
+            }
             if (!name.endsWith(".jar")) continue;
+            if (!com.cannon.onyxlauncher.utils.DownloadUtils.isValidZipArchive(f)) {
+                File corruptedTarget = new File(modsDir, f.getName() + ".corrupted_zip");
+                if (corruptedTarget.exists()) {
+                    corruptedTarget.delete();
+                }
+                if (f.renameTo(corruptedTarget)) {
+                    Log.w(APP_NAME, "Auto-quarantined corrupted mod jar (missing ZIP END header): " + f.getName());
+                } else {
+                    f.delete();
+                }
+                continue;
+            }
             for (String pat : incompatiblePatterns) {
                 if (name.contains(pat)) {
                     File disabledTarget = new File(modsDir, f.getName() + ".disabled_gl4es");
                     if (f.renameTo(disabledTarget)) {
-                        Log.i(APP_NAME, "Auto-disabled incompatible desktop Sodium/Iris mod for GL4ES: " + f.getName());
+                        Log.i(APP_NAME, "Auto-disabled incompatible desktop/visual mod for mobile GLES: " + f.getName());
                     }
                     break;
                 }
+            }
+        }
+    }
+
+    private static int parseIntOrDefault(String raw, int fallback) {
+        if (raw == null) return fallback;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException ignored) {
+            return fallback;
+        }
+    }
+
+    private static void upsertKeyValueLines(File file, java.util.Map<String, String> updates) {
+        if (file == null || updates == null || updates.isEmpty()) return;
+        java.util.Set<String> updatedKeys = new java.util.HashSet<>();
+        StringBuilder sb = new StringBuilder();
+        try {
+            if (file.isFile()) {
+                String existing = read(file.getAbsolutePath());
+                String[] lines = existing.split("\\r?\\n");
+                for (String line : lines) {
+                    String trimmed = line.trim();
+                    if (trimmed.isEmpty() && lines.length == 1) continue;
+                    int eqIdx = (!trimmed.isEmpty() && !trimmed.startsWith("#")) ? line.indexOf('=') : -1;
+                    if (eqIdx > 0) {
+                        String key = line.substring(0, eqIdx).trim();
+                        if (updates.containsKey(key)) {
+                            sb.append(key).append('=').append(updates.get(key)).append('\n');
+                            updatedKeys.add(key);
+                            continue;
+                        }
+                    }
+                    sb.append(line).append('\n');
+                }
+            }
+            for (java.util.Map.Entry<String, String> entry : updates.entrySet()) {
+                if (!updatedKeys.contains(entry.getKey())) {
+                    sb.append(entry.getKey()).append('=').append(entry.getValue()).append('\n');
+                }
+            }
+            write(file.getAbsolutePath(), sb.toString());
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed updating config file: " + file.getName(), e);
+        }
+    }
+
+    private static void applyMobilePerformanceOptimizations(File gamedir) {
+        if (gamedir == null) return;
+        if (!gamedir.exists()) {
+            gamedir.mkdirs();
+        }
+
+        try {
+            MCOptionUtils.load(gamedir.getAbsolutePath());
+            MCOptionUtils.set("mipmapLevels", "0");
+            MCOptionUtils.set("graphicsMode", "0");
+            MCOptionUtils.set("ao", "false");
+            MCOptionUtils.set("renderClouds", "false");
+            MCOptionUtils.set("clouds", "false");
+            MCOptionUtils.set("particles", "2");
+            MCOptionUtils.set("entityShadows", "false");
+            MCOptionUtils.set("entityDistanceScaling", "0.5");
+            MCOptionUtils.set("biomeBlendRadius", "0");
+            MCOptionUtils.set("enableVsync", "false");
+            MCOptionUtils.set("maxFps", "120");
+            MCOptionUtils.set("menuBackgroundBlurriness", "0");
+            MCOptionUtils.set("prioritizeChunkUpdates", "0");
+            MCOptionUtils.set("vignette", "false");
+            MCOptionUtils.set("bobView", "false");
+            MCOptionUtils.set("screenEffectScale", "0.0");
+            MCOptionUtils.set("fovEffectScale", "0.0");
+            MCOptionUtils.set("darknessEffectScale", "0.0");
+            MCOptionUtils.set("glintStrength", "0.2");
+
+            File modsDirCheck = new File(gamedir, "mods");
+            File[] existingMods = (modsDirCheck.exists() && modsDirCheck.isDirectory()) ? modsDirCheck.listFiles() : null;
+            boolean isHeavyModpack = gamedir.getAbsolutePath().contains("custom_instances") || (existingMods != null && existingMods.length >= 60);
+            int maxRenderDist = isHeavyModpack ? 3 : 5;
+            int defaultRenderDist = isHeavyModpack ? 3 : 4;
+
+            int renderDistance = parseIntOrDefault(MCOptionUtils.get("renderDistance"), -1);
+            if (renderDistance <= 0 || renderDistance > maxRenderDist) {
+                MCOptionUtils.set("renderDistance", String.valueOf(defaultRenderDist));
+            }
+            int simulationDistance = parseIntOrDefault(MCOptionUtils.get("simulationDistance"), -1);
+            if (simulationDistance < 5 || simulationDistance > 5) {
+                MCOptionUtils.set("simulationDistance", "5");
+            }
+            int guiScale = parseIntOrDefault(MCOptionUtils.get("guiScale"), 0);
+            if (guiScale == 0) {
+                MCOptionUtils.set("guiScale", "3");
+            }
+            MCOptionUtils.save();
+            Log.i(APP_NAME, "Applied mobile options.txt performance tuning in " + gamedir.getAbsolutePath());
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed applying options.txt performance tuning", e);
+        }
+
+        File configDir = new File(gamedir, "config");
+        if (!configDir.exists()) {
+            configDir.mkdirs();
+        }
+
+        File irisPropsFile = new File(configDir, "iris.properties");
+        java.util.Properties irisProps = new java.util.Properties();
+        if (irisPropsFile.isFile()) {
+            try (java.io.FileInputStream fis = new java.io.FileInputStream(irisPropsFile)) {
+                irisProps.load(fis);
+            } catch (Exception e) {
+                Log.w(APP_NAME, "Failed reading iris.properties", e);
+            }
+        }
+        irisProps.setProperty("enableShaders", "false");
+        try (java.io.FileOutputStream fos = new java.io.FileOutputStream(irisPropsFile)) {
+            irisProps.store(fos, "OnyxLauncher mobile performance optimization");
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed writing iris.properties", e);
+        }
+
+        java.util.Map<String, String> shaderUpdates = new java.util.LinkedHashMap<>();
+        shaderUpdates.put("shaderPack", "(internal)");
+        upsertKeyValueLines(new File(gamedir, "optionsshaders.txt"), shaderUpdates);
+
+        try {
+            String immediatelyFastJson = "{\n"
+                    + "  \"font_atlas_resizing\": true,\n"
+                    + "  \"map_atlas_generation\": true,\n"
+                    + "  \"hud_batching\": true,\n"
+                    + "  \"fast_text_lookup\": true,\n"
+                    + "  \"fast_buffer_upload\": false,\n"
+                    + "  \"experimental_screen_batching\": false\n"
+                    + "}\n";
+            write(new File(configDir, "immediatelyfast.json").getAbsolutePath(), immediatelyFastJson);
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed writing immediatelyfast.json", e);
+        }
+
+        try {
+            String entityCullingJson = "{\n"
+                    + "  \"ConfigVersion\": 6,\n"
+                    + "  \"renderNametagsThroughWalls\": true,\n"
+                    + "  \"blockEntityFrustumCulling\": true,\n"
+                    + "  \"tracingDistance\": 48,\n"
+                    + "  \"debugMode\": false,\n"
+                    + "  \"sleepDelay\": 10,\n"
+                    + "  \"hitboxLimit\": 30,\n"
+                    + "  \"tickCulling\": true,\n"
+                    + "  \"disableF3\": false\n"
+                    + "}\n";
+            write(new File(configDir, "entityculling.json").getAbsolutePath(), entityCullingJson);
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed writing entityculling.json", e);
+        }
+
+        // JEI low-memory & fast recipe loading optimization (cuts RAM by ~400-600MB and prevents GC thrashing)
+        try {
+            File jeiConfigDir = new File(configDir, "jei");
+            File jeiIni = new File(jeiConfigDir, "jei-client.ini");
+            if (jeiIni.isFile()) {
+                String content = read(jeiIni.getAbsolutePath());
+                String updated = content
+                        .replaceAll("(?m)^(\\s*LowMemorySlowSearchEnabled\\s*=\\s*)false\\b", "$1true")
+                        .replaceAll("(?m)^(\\s*SearchTooltipMode\\s*=\\s*)\\w+", "$1DISABLED")
+                        .replaceAll("(?m)^(\\s*SearchTagMode\\s*=\\s*)\\w+", "$1DISABLED")
+                        .replaceAll("(?m)^(\\s*SearchCreativeTabMode\\s*=\\s*)\\w+", "$1DISABLED")
+                        .replaceAll("(?m)^(\\s*SearchColorMode\\s*=\\s*)\\w+", "$1DISABLED")
+                        .replaceAll("(?m)^(\\s*MaxColumns\\s*=\\s*)\\d+", "$16");
+                if (!updated.equals(content)) {
+                    write(jeiIni.getAbsolutePath(), updated);
+                    Log.i(APP_NAME, "Applied JEI low-memory optimization in jei-client.ini");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed updating jei-client.ini", e);
+        }
+
+        // Disable Flywheel instancing backend on GL4ES (prevents Create rendering stalls)
+        try {
+            File flywheelToml = new File(configDir, "flywheel-client.toml");
+            if (flywheelToml.isFile()) {
+                String content = read(flywheelToml.getAbsolutePath());
+                String updated = content
+                        .replaceAll("(?m)^(\\s*backend\\s*=\\s*)\"flywheel:(?:instancing|indirect|batching)\"", "$1\"flywheel:off\"")
+                        .replaceAll("(?m)^(\\s*backend\\s*=\\s*)\"(?:INSTANCING|BATCHING|DEFAULT)\"", "$1\"OFF\"");
+                if (!updated.equals(content)) {
+                    write(flywheelToml.getAbsolutePath(), updated);
+                    Log.i(APP_NAME, "Disabled Flywheel instancing backend for GL4ES in flywheel-client.toml");
+                }
+            }
+        } catch (Exception e) {
+            Log.w(APP_NAME, "Failed updating flywheel-client.toml", e);
+        }
+
+        File modsDir = new File(gamedir, "mods");
+        File[] modFiles = (modsDir.exists() && modsDir.isDirectory()) ? modsDir.listFiles() : null;
+        boolean hasModernFix = false;
+        if (modFiles != null) {
+            for (File modFile : modFiles) {
+                String lower = modFile.getName().toLowerCase(Locale.ROOT);
+                if (lower.endsWith(".jar") && lower.contains("modernfix")) {
+                    hasModernFix = true;
+                    break;
+                }
+            }
+        }
+        if (hasModernFix) {
+            java.util.Map<String, String> modernFixUpdates = new java.util.LinkedHashMap<>();
+            modernFixUpdates.put("mixin.perf.dynamic_resources", "true");
+            modernFixUpdates.put("mixin.perf.faster_item_rendering", "true");
+            modernFixUpdates.put("mixin.perf.compact_bit_storage", "true");
+            modernFixUpdates.put("mixin.perf.deduplicate_location", "true");
+            modernFixUpdates.put("mixin.perf.faster_ingredients", "true");
+            modernFixUpdates.put("mixin.perf.faster_texture_stitching", "true");
+            modernFixUpdates.put("mixin.perf.reduce_blockstate_cache_rebuilds", "true");
+            modernFixUpdates.put("mixin.perf.thread_priorities", "true");
+            modernFixUpdates.put("mixin.perf.clear_mixin_classinfo", "true");
+            upsertKeyValueLines(new File(configDir, "modernfix-mixins.properties"), modernFixUpdates);
+            Log.i(APP_NAME, "Applied ModernFix dynamic resources optimization");
+        }
+
+        File allTheTweaksConfig = new File(configDir, "allthetweaks-common.toml");
+        if (allTheTweaksConfig.isFile()) {
+            try {
+                String toml = read(allTheTweaksConfig.getAbsolutePath());
+                String updatedToml = toml.replaceAll("(?m)^(\\s*discord\\s*=\\s*)true\\b", "$1false");
+                if (!updatedToml.equals(toml)) {
+                    write(allTheTweaksConfig.getAbsolutePath(), updatedToml);
+                    Log.i(APP_NAME, "Disabled AllTheTweaks Discord RPC in " + allTheTweaksConfig.getName());
+                }
+            } catch (Exception e) {
+                Log.w(APP_NAME, "Failed updating allthetweaks-common.toml", e);
             }
         }
     }
@@ -869,14 +1259,297 @@ public final class Tools {
             new String[]{"sodium"},
             new String[]{"LevelRendererMixin"},
             new String[]{"LevelRendererMixin"}
+        ),
+        // veil (standalone or Jar-in-Jar inside sable / other mods): incompatible GL4ES rendering/shader mixins
+        new MixinPatchRule(
+            new String[]{"veil", "sable"},
+            new String[]{
+                "PerformanceAbstractTextureMixin",
+                "PerformanceLevelRendererMixin",
+                "PerformanceRenderTargetMixin",
+                "PerformanceScreenEffectRendererMixin",
+                "ShaderEffectInstanceMixin",
+                "ShaderGameRendererMixin",
+                "ShaderInstanceMixin",
+                "ShaderProgramManagerMixin",
+                "PipelineTextureManagerMixin"
+            },
+            new String[]{
+                "PerformanceAbstractTextureMixin",
+                "PerformanceLevelRendererMixin",
+                "PerformanceRenderTargetMixin",
+                "PerformanceScreenEffectRendererMixin",
+                "ShaderEffectInstanceMixin",
+                "ShaderGameRendererMixin",
+                ".ShaderInstanceMixin",
+                "ShaderProgramManagerMixin",
+                "PipelineTextureManagerMixin"
+            }
+        ),
+        // lwjgl-* nested Jar-in-Jar modules (e.g. lwjgl-tinyexr inside Veil / Sable Companion):
+        // Strip explicit module-info.class (which requires named module org.lwjgl) and inject
+        // Automatic-Module-Name in MANIFEST.MF so NeoForge/Forge ModuleLayer resolves org.lwjgl
+        // from OnyxLauncher's unnamed classpath (-cp lwjgl3/lwjgl.jar).
+        new MixinPatchRule(
+            new String[]{"lwjgl-", "tinyexr"},
+            new String[]{"module-info"},
+            new String[]{}
+        ),
+        // NeoForge/Forge mods declaring openGLVersion="[3.2,)" in mods.toml / neoforge.mods.toml
+        // (e.g. Superb Warfare): with earlyWindowControl=false on Android, ImmediateWindowHandler.getGLVersion()
+        // returns "0.0" during early mod validation even though GL4ES provides OpenGL 3.3.
+        new MixinPatchRule(
+            new String[]{"superbwarfare", "__opengl_bound__"},
+            new String[]{},
+            new String[]{}
+        ),
+        // watut (What Are They Up To): keep mod & network channels [watut:nbt_server]/[watut:nbt_client]
+        // active for multiplayer servers while stripping heavy desktop FBO blur/capture mixins on GL4ES
+        new MixinPatchRule(
+            new String[]{"watut"},
+            new String[]{
+                "ScreenRenderBackground",
+                "ScreenRenderWithTooltip",
+                "PostChainResize",
+                "GameRendererReloadShaders"
+            },
+            new String[]{
+                "ScreenRenderBackground",
+                "ScreenRenderWithTooltip",
+                "PostChainResize",
+                "GameRendererReloadShaders"
+            }
         )
     };
 
+    private static boolean matchesJarKeywords(String nameLower, MixinPatchRule rule) {
+        if (nameLower == null) return false;
+        for (String kw : rule.jarKeywords) {
+            if (nameLower.contains(kw.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isNestedModJarEntry(String entryName) {
+        return entryName != null
+            && (entryName.startsWith("META-INF/jarjar/") || entryName.startsWith("META-INF/jars/"))
+            && entryName.endsWith(".jar");
+    }
+
+    private static boolean matchesClassKeyword(String entryName, String ck) {
+        if (!entryName.endsWith(".class")) return false;
+        return entryName.endsWith("/" + ck + ".class")
+            || entryName.equals(ck + ".class")
+            || entryName.contains("/" + ck + "$")
+            || entryName.startsWith(ck + "$");
+    }
+
+    private static List<String> listNestedModJarNames(File modJar) {
+        List<String> nestedNames = new ArrayList<>();
+        try (ZipFile zipFile = new ZipFile(modJar)) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                String name = entry.getName();
+                if (isNestedModJarEntry(name)) {
+                    nestedNames.add(name.toLowerCase(Locale.ROOT));
+                    // Also inspect 2nd-level nested Jar-in-Jar (e.g. sablecompanion -> veil -> lwjgl-tinyexr)
+                    try (ZipInputStream subZis = new ZipInputStream(new BufferedInputStream(zipFile.getInputStream(entry)))) {
+                        ZipEntry subEntry;
+                        while ((subEntry = subZis.getNextEntry()) != null) {
+                            String subName = subEntry.getName();
+                            if (isNestedModJarEntry(subName)) {
+                                nestedNames.add(subName.toLowerCase(Locale.ROOT));
+                            }
+                            subZis.closeEntry();
+                        }
+                    } catch (IOException ignored) {
+                    }
+                }
+            }
+        } catch (IOException e) {
+            Log.w(APP_NAME, "Could not inspect nested JAR index for " + modJar.getName(), e);
+        }
+        return nestedNames;
+    }
+
+    private static String deriveLwjglAutomaticModuleName(String jarDisplayName) {
+        String lower = jarDisplayName.toLowerCase(Locale.ROOT);
+        int bang = lower.lastIndexOf('!');
+        String filePart = bang >= 0 ? lower.substring(bang + 1) : lower;
+        int slash = filePart.lastIndexOf('/');
+        if (slash >= 0) filePart = filePart.substring(slash + 1);
+        if (filePart.contains("tinyexr")) return "org.lwjgl.tinyexr";
+        int idx = filePart.indexOf("lwjgl-");
+        if (idx >= 0) {
+            String rest = filePart.substring(idx + "lwjgl-".length());
+            int dash = rest.indexOf('-');
+            int dot = rest.indexOf('.');
+            int end = (dash >= 0 && dot >= 0) ? Math.min(dash, dot) : (dash >= 0 ? dash : dot);
+            String sub = end > 0 ? rest.substring(0, end) : rest;
+            if (!sub.isEmpty()) {
+                return "org.lwjgl." + sub;
+            }
+        }
+        return null;
+    }
+
+    private static void scanJarStreamForPatches(
+            ZipInputStream scan,
+            String jarDisplayName,
+            boolean scanTopLevelEntries,
+            MixinPatchRule rule,
+            Set<String> classesToRemove,
+            Map<String, byte[]> patchedEntries
+    ) throws IOException {
+        ZipEntry entry;
+        while ((entry = scan.getNextEntry()) != null) {
+            String entryName = entry.getName();
+            if (isNestedModJarEntry(entryName)) {
+                String nestedNameLower = entryName.toLowerCase(Locale.ROOT);
+                boolean childTopLevelMatch = scanTopLevelEntries || matchesJarKeywords(nestedNameLower, rule);
+                byte[] nestedBytes = IOUtils.toByteArray(scan);
+                byte[] patchedNested = patchJarBytesIfNeeded(nestedBytes, jarDisplayName + "!" + entryName, childTopLevelMatch, rule);
+                if (patchedNested != null) {
+                    patchedEntries.put(entryName, patchedNested);
+                }
+            } else if (scanTopLevelEntries) {
+                for (String ck : rule.classKeywords) {
+                    if (matchesClassKeyword(entryName, ck)) {
+                        classesToRemove.add(entryName);
+                        Log.i(APP_NAME, "Found class to remove in " + jarDisplayName + ": " + entryName);
+                    }
+                }
+                if (entryName.equalsIgnoreCase("META-INF/MANIFEST.MF") && rule.classKeywords.length > 0 && "module-info".equals(rule.classKeywords[0])) {
+                    String autoModName = deriveLwjglAutomaticModuleName(jarDisplayName);
+                    if (autoModName != null) {
+                        byte[] mfBytes = IOUtils.toByteArray(scan);
+                        String mfContent = new String(mfBytes, StandardCharsets.UTF_8);
+                        if (!mfContent.contains("Automatic-Module-Name:")) {
+                            String trimmed = mfContent.trim();
+                            String updatedMf = trimmed + "\r\nAutomatic-Module-Name: " + autoModName + "\r\n\r\n";
+                            patchedEntries.put(entryName, updatedMf.getBytes(StandardCharsets.UTF_8));
+                            Log.i(APP_NAME, "Injected Automatic-Module-Name: " + autoModName + " into " + jarDisplayName);
+                        }
+                    }
+                }
+                if (entryName.equalsIgnoreCase("META-INF/neoforge.mods.toml") || entryName.equalsIgnoreCase("META-INF/mods.toml")) {
+                    byte[] tomlBytes = IOUtils.toByteArray(scan);
+                    String tomlContent = new String(tomlBytes, StandardCharsets.UTF_8);
+                    if (tomlContent.contains("openGLVersion") || tomlContent.contains("onyxIgnoredOpenGLVersion")) {
+                        String updatedToml = tomlContent.replaceAll(
+                                "(?m)^[ \\t]*(?:openGLVersion|onyxIgnoredOpenGLVersion)\\s*=.*$",
+                                "# openGLVersion bound removed for Android GL4ES"
+                        );
+                        patchedEntries.put(entryName, updatedToml.getBytes(StandardCharsets.UTF_8));
+                        Log.i(APP_NAME, "Removed openGLVersion feature bound in " + jarDisplayName + "!" + entryName);
+                    }
+                }
+                if (entryName.endsWith(".mixins.json") || entryName.equals("mixins.json")) {
+                    byte[] jsonBytes = IOUtils.toByteArray(scan);
+                    String jsonContent = new String(jsonBytes, StandardCharsets.UTF_8);
+                    boolean needsPatch = false;
+                    for (String jk : rule.jsonMixinKeywords) {
+                        if (jsonContent.contains(jk)) {
+                            jsonContent = removeMixinEntryFromJson(jsonContent, jk);
+                            needsPatch = true;
+                        }
+                    }
+                    if (needsPatch) {
+                        patchedEntries.put(entryName, jsonContent.getBytes(StandardCharsets.UTF_8));
+                        Log.i(APP_NAME, "Patched mixin config in " + jarDisplayName + ": " + entryName);
+                    }
+                }
+            }
+            scan.closeEntry();
+        }
+    }
+
+    private static byte[] patchJarBytesIfNeeded(byte[] jarBytes, String jarDisplayName, boolean scanTopLevelEntries, MixinPatchRule rule) {
+        Set<String> classesToRemove = new HashSet<>();
+        Map<String, byte[]> patchedEntries = new HashMap<>();
+
+        try (ZipInputStream scan = new ZipInputStream(new BufferedInputStream(new ByteArrayInputStream(jarBytes)))) {
+            scanJarStreamForPatches(scan, jarDisplayName, scanTopLevelEntries, rule, classesToRemove, patchedEntries);
+        } catch (IOException e) {
+            Log.e(APP_NAME, "Failed to scan nested jar bytes: " + jarDisplayName, e);
+            return null;
+        }
+
+        if (classesToRemove.isEmpty() && patchedEntries.isEmpty()) {
+            return null;
+        }
+
+        ByteArrayOutputStream baos = new ByteArrayOutputStream(jarBytes.length);
+        try (
+            ZipInputStream input = new ZipInputStream(new BufferedInputStream(new ByteArrayInputStream(jarBytes)));
+            ZipOutputStream output = new ZipOutputStream(baos)
+        ) {
+            rewriteFilteredZipStream(input, output, classesToRemove, patchedEntries);
+        } catch (IOException e) {
+            Log.e(APP_NAME, "Failed to rewrite nested jar bytes: " + jarDisplayName, e);
+            return null;
+        }
+
+        Log.i(APP_NAME, "Successfully patched nested JAR: " + jarDisplayName);
+        return baos.toByteArray();
+    }
+
+    private static void rewriteFilteredZipStream(
+            ZipInputStream input,
+            ZipOutputStream output,
+            Set<String> classesToRemove,
+            Map<String, byte[]> patchedEntries
+    ) throws IOException {
+        ZipEntry entry;
+        while ((entry = input.getNextEntry()) != null) {
+            String entryName = entry.getName();
+            if (classesToRemove.contains(entryName)) {
+                input.closeEntry();
+                continue;
+            }
+            ZipEntry outEntry = new ZipEntry(entryName);
+            if (entry.getTime() >= 0) outEntry.setTime(entry.getTime());
+            output.putNextEntry(outEntry);
+
+            if (patchedEntries.containsKey(entryName)) {
+                output.write(patchedEntries.get(entryName));
+            } else {
+                IOUtils.copy(input, output);
+            }
+            output.closeEntry();
+            input.closeEntry();
+        }
+    }
+
     /**
      * Automatically fixes mods that have broken LVT (Local Variable Table) @Inject mixins
-     * causing InjectionError / MixinTransformerError on mobile Android ARM64 JVMs.
-     * Strips both the problematic .class file and its entry from *.mixins.json inside the mod JAR.
+     * or incompatible desktop OpenGL mixins on mobile Android ARM64/GL4ES.
+     * Strips problematic .class files and their entries from *.mixins.json inside top-level
+     * mod JARs as well as nested Jar-in-Jar (META-INF/jarjar/*.jar, META-INF/jars/*.jar) entries.
      */
+    private static boolean hasOpenGLVersionFeatureBound(File modJar) {
+        try (ZipFile zf = new ZipFile(modJar)) {
+            String[] tomlPaths = new String[]{"META-INF/neoforge.mods.toml", "META-INF/mods.toml"};
+            for (String path : tomlPaths) {
+                ZipEntry entry = zf.getEntry(path);
+                if (entry != null) {
+                    try (InputStream is = zf.getInputStream(entry)) {
+                        String content = new String(IOUtils.toByteArray(is), StandardCharsets.UTF_8);
+                        if ((content.contains("openGLVersion") || content.contains("onyxIgnoredOpenGLVersion"))
+                                && !content.contains("# openGLVersion bound removed for Android GL4ES")) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return false;
+    }
+
     private static void applyModMixinCompatPatches(File gamedir) {
         if (gamedir == null) return;
 
@@ -890,61 +1563,67 @@ public final class Tools {
             File[] jarFiles = modsDir.listFiles((dir, name) -> name.endsWith(".jar"));
             if (jarFiles == null) continue;
 
+            File cacheFile = new File(modsDir, ".onyx_mixin_scan_cache_v5");
+            java.util.Properties scanCache = new java.util.Properties();
+            if (cacheFile.isFile()) {
+                try (FileInputStream fis = new FileInputStream(cacheFile)) {
+                    scanCache.load(fis);
+                } catch (IOException ignored) {
+                }
+            }
+            boolean cacheDirty = false;
+
             for (File modJar : jarFiles) {
-                String jarNameLower = modJar.getName().toLowerCase();
+                String jarName = modJar.getName();
+                String expectedSig = "v5:" + modJar.length() + ":" + modJar.lastModified();
+                if (expectedSig.equals(scanCache.getProperty(jarName))) {
+                    continue;
+                }
+
+                String jarNameLower = jarName.toLowerCase(Locale.ROOT);
+                List<String> nestedJarNames = null;
+                Boolean hasGlBound = null;
+
                 for (MixinPatchRule rule : MOD_MIXIN_PATCH_RULES) {
-                    boolean matches = false;
-                    for (String kw : rule.jarKeywords) {
-                        if (jarNameLower.contains(kw.toLowerCase())) {
-                            matches = true;
-                            break;
+                    boolean outerMatches = matchesJarKeywords(jarNameLower, rule);
+                    if (!outerMatches && rule.jarKeywords.length > 1 && "__opengl_bound__".equals(rule.jarKeywords[1])) {
+                        if (hasGlBound == null) {
+                            hasGlBound = hasOpenGLVersionFeatureBound(modJar);
+                        }
+                        outerMatches = hasGlBound;
+                    }
+                    boolean nestedMatches = false;
+                    if (!outerMatches) {
+                        if (nestedJarNames == null) {
+                            nestedJarNames = listNestedModJarNames(modJar);
+                        }
+                        for (String nestedName : nestedJarNames) {
+                            if (matchesJarKeywords(nestedName, rule)) {
+                                nestedMatches = true;
+                                break;
+                            }
                         }
                     }
-                    if (!matches) continue;
+                    if (!outerMatches && !nestedMatches) continue;
 
-                    File markerFile = new File(modJar.getAbsolutePath() + ".onyx_mixin_patched_" + rule.jarKeywords[0]);
+                    File markerFile = new File(modJar.getAbsolutePath() + ".onyx_mixin_patched_v5_" + rule.jarKeywords[0]);
                     if (markerFile.exists() && markerFile.lastModified() >= modJar.lastModified()) {
                         continue;
                     }
 
                     Log.i(APP_NAME, "Applying compatibility mixin patch to: " + modJar.getName());
 
-                    java.util.Set<String> classesToRemove = new java.util.HashSet<>();
-                    java.util.Map<String, byte[]> patchedJsonEntries = new java.util.HashMap<>();
+                    Set<String> classesToRemove = new HashSet<>();
+                    Map<String, byte[]> patchedEntries = new HashMap<>();
 
                     try (ZipInputStream scan = new ZipInputStream(new BufferedInputStream(new FileInputStream(modJar)))) {
-                        ZipEntry entry;
-                        while ((entry = scan.getNextEntry()) != null) {
-                            String entryName = entry.getName();
-                            for (String ck : rule.classKeywords) {
-                                if (entryName.endsWith("/" + ck + ".class") || entryName.equals(ck + ".class")) {
-                                    classesToRemove.add(entryName);
-                                    Log.i(APP_NAME, "Found mixin class to remove: " + entryName);
-                                }
-                            }
-                            if (entryName.endsWith(".mixins.json") || entryName.equals("mixins.json")) {
-                                byte[] jsonBytes = IOUtils.toByteArray(scan);
-                                String jsonContent = new String(jsonBytes, StandardCharsets.UTF_8);
-                                boolean needsPatch = false;
-                                for (String jk : rule.jsonMixinKeywords) {
-                                    if (jsonContent.contains(jk)) {
-                                        jsonContent = removeMixinEntryFromJson(jsonContent, jk);
-                                        needsPatch = true;
-                                    }
-                                }
-                                if (needsPatch) {
-                                    patchedJsonEntries.put(entryName, jsonContent.getBytes(StandardCharsets.UTF_8));
-                                    Log.i(APP_NAME, "Patched mixin config: " + entryName);
-                                }
-                            }
-                            scan.closeEntry();
-                        }
+                        scanJarStreamForPatches(scan, modJar.getName(), outerMatches, rule, classesToRemove, patchedEntries);
                     } catch (IOException e) {
                         Log.e(APP_NAME, "Failed to scan mod jar: " + modJar.getName(), e);
                         continue;
                     }
 
-                    if (classesToRemove.isEmpty() && patchedJsonEntries.isEmpty()) {
+                    if (classesToRemove.isEmpty() && patchedEntries.isEmpty()) {
                         try { markerFile.createNewFile(); } catch (IOException ignored) {}
                         continue;
                     }
@@ -954,25 +1633,7 @@ public final class Tools {
                         ZipInputStream input = new ZipInputStream(new BufferedInputStream(new FileInputStream(modJar)));
                         ZipOutputStream output = new ZipOutputStream(new FileOutputStream(patchedJar))
                     ) {
-                        ZipEntry entry;
-                        while ((entry = input.getNextEntry()) != null) {
-                            String entryName = entry.getName();
-                            if (classesToRemove.contains(entryName)) {
-                                input.closeEntry();
-                                continue;
-                            }
-                            ZipEntry outEntry = new ZipEntry(entryName);
-                            if (entry.getTime() >= 0) outEntry.setTime(entry.getTime());
-                            output.putNextEntry(outEntry);
-
-                            if (patchedJsonEntries.containsKey(entryName)) {
-                                output.write(patchedJsonEntries.get(entryName));
-                            } else {
-                                IOUtils.copy(input, output);
-                            }
-                            output.closeEntry();
-                            input.closeEntry();
-                        }
+                        rewriteFilteredZipStream(input, output, classesToRemove, patchedEntries);
                     } catch (IOException e) {
                         Log.e(APP_NAME, "Failed to write patched mod jar: " + modJar.getName(), e);
                         if (patchedJar.exists()) patchedJar.delete();
@@ -986,6 +1647,19 @@ public final class Tools {
                         Log.e(APP_NAME, "Failed to overwrite original mod JAR: " + modJar.getName());
                         if (patchedJar.exists()) patchedJar.delete();
                     }
+                }
+
+                String updatedSig = "v5:" + modJar.length() + ":" + modJar.lastModified();
+                if (!updatedSig.equals(scanCache.getProperty(jarName))) {
+                    scanCache.setProperty(jarName, updatedSig);
+                    cacheDirty = true;
+                }
+            }
+
+            if (cacheDirty) {
+                try (FileOutputStream fos = new FileOutputStream(cacheFile)) {
+                    scanCache.store(fos, "OnyxLauncher mod mixin scan cache");
+                } catch (IOException ignored) {
                 }
             }
         }
@@ -1221,9 +1895,30 @@ public final class Tools {
     }
 
     public static String printToString(Throwable throwable) {
+        if (throwable == null) {
+            return "Unknown error (Throwable is null)";
+        }
         StringWriter stringWriter = new StringWriter();
         PrintWriter printWriter = new PrintWriter(stringWriter);
-        throwable.printStackTrace(printWriter);
+        try {
+            throwable.printStackTrace(printWriter);
+        } catch (Throwable t) {
+            printWriter.println(throwable.getClass().getName() + ": " + throwable.getMessage());
+            try {
+                StackTraceElement[] stack = throwable.getStackTrace();
+                if (stack != null) {
+                    for (StackTraceElement el : stack) {
+                        printWriter.println("\tat " + el);
+                    }
+                }
+            } catch (Throwable ignored) {}
+            try {
+                Throwable cause = throwable.getCause();
+                if (cause != null && cause != throwable) {
+                    printWriter.println("Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+                }
+            } catch (Throwable ignored) {}
+        }
         printWriter.close();
         return stringWriter.toString();
     }
@@ -1407,23 +2102,34 @@ public final class Tools {
         if (!isValidString(versionName)) return;
         File jsonFile = new File(DIR_HOME_VERSION + "/" + versionName + "/" + versionName + ".json");
         if (!jsonFile.exists()) {
+            // Forge and NeoForge profiles are generated by their installers and are
+            // intentionally absent from Mojang's version manifest.  Do not make a
+            // network request from a game Activity in an attempt to recover them.
+            if (versionName.contains("-forge-") || versionName.startsWith("neoforge-")) {
+                Log.w(APP_NAME, "Missing installed mod-loader profile: " + versionName);
+                return;
+            }
+            android.os.StrictMode.ThreadPolicy oldPolicy = android.os.StrictMode.getThreadPolicy();
             try {
+                android.os.StrictMode.setThreadPolicy(new android.os.StrictMode.ThreadPolicy.Builder().permitAll().build());
                 if (jsonFile.getParentFile() != null) jsonFile.getParentFile().mkdirs();
                 if (versionName.startsWith("fabric-loader-")) {
-                    String[] parts = versionName.split("-");
-                    if (parts.length >= 4) {
-                        String loaderVer = parts[2];
-                        String gameVer = parts[3];
+                    String rest = versionName.substring("fabric-loader-".length());
+                    int lastDash = rest.lastIndexOf('-');
+                    if (lastDash > 0) {
+                        String loaderVer = rest.substring(0, lastDash);
+                        String gameVer = rest.substring(lastDash + 1);
                         String url = String.format("https://meta.fabricmc.net/v2/versions/loader/%s/%s/profile/json", gameVer, loaderVer);
                         Log.i(APP_NAME, "Downloading missing Fabric version JSON from " + url);
                         String jsonContent = com.cannon.onyxlauncher.utils.DownloadUtils.downloadString(url);
                         write(jsonFile.getAbsolutePath(), jsonContent);
                     }
                 } else if (versionName.startsWith("quilt-loader-")) {
-                    String[] parts = versionName.split("-");
-                    if (parts.length >= 4) {
-                        String loaderVer = parts[2];
-                        String gameVer = parts[3];
+                    String rest = versionName.substring("quilt-loader-".length());
+                    int lastDash = rest.lastIndexOf('-');
+                    if (lastDash > 0) {
+                        String loaderVer = rest.substring(0, lastDash);
+                        String gameVer = rest.substring(lastDash + 1);
                         String url = String.format("https://meta.quiltmc.org/v3/versions/loader/%s/%s/profile/json", gameVer, loaderVer);
                         Log.i(APP_NAME, "Downloading missing Quilt version JSON from " + url);
                         String jsonContent = com.cannon.onyxlauncher.utils.DownloadUtils.downloadString(url);
@@ -1445,6 +2151,8 @@ public final class Tools {
                 }
             } catch (Exception e) {
                 Log.e(APP_NAME, "Failed to auto-download missing version JSON for " + versionName, e);
+            } finally {
+                android.os.StrictMode.setThreadPolicy(oldPolicy);
             }
         }
     }
@@ -1840,8 +2548,12 @@ public final class Tools {
         String runtime = getSelectedRuntime(minecraftProfile);
         String profileRuntime = getRuntimeName(minecraftProfile.javaDir);
         Runtime pickedRuntime = MultiRTUtils.read(runtime);
-        if(runtime == null || pickedRuntime.javaVersion == 0 || pickedRuntime.javaVersion < targetJavaVersion) {
-            String preferredRuntime = MultiRTUtils.getNearestJreName(targetJavaVersion);
+        boolean legacyNeedsJava8 = targetJavaVersion <= 8 && pickedRuntime.javaVersion > 8;
+        if(runtime == null || pickedRuntime.javaVersion == 0 || pickedRuntime.javaVersion < targetJavaVersion || legacyNeedsJava8) {
+            String preferredRuntime = legacyNeedsJava8
+                    ? MultiRTUtils.getExactJreName(8)
+                    : MultiRTUtils.getNearestJreName(targetJavaVersion);
+            if(preferredRuntime == null) preferredRuntime = MultiRTUtils.getNearestJreName(targetJavaVersion);
             if(preferredRuntime == null) throw new RuntimeException("Failed to autopick runtime!");
             if(profileRuntime != null) minecraftProfile.javaDir = Tools.LAUNCHERPROFILES_RTPREFIX+preferredRuntime;
             runtime = preferredRuntime;

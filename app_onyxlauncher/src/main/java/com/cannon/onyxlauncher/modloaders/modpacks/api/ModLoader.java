@@ -100,11 +100,9 @@ public class ModLoader {
 
         switch (modLoaderType) {
             case MOD_LOADER_FORGE:
-                if (targetMcJava >= 17) {
-                    ForgeUtils.addCliInstallArgs(baseIntent, modInstallerJar, Tools.DIR_GAME_NEW);
-                } else {
-                    ForgeUtils.addAutoInstallArgs(baseIntent, modInstallerJar, getVersionId());
-                }
+                // Do not use the legacy java-agent installer: it can report success
+                // without writing versions/<id>/<id>.json, especially with Java 17+.
+                ForgeUtils.addCliInstallArgs(baseIntent, modInstallerJar, Tools.DIR_GAME_NEW);
                 return baseIntent;
             case MOD_LOADER_NEOFORGE: {
                 ForgeUtils.addCliInstallArgs(baseIntent, modInstallerJar, Tools.DIR_GAME_NEW);

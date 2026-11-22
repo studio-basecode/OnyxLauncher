@@ -105,7 +105,8 @@ public class ModDownloader {
                 }
                 new DownloadTask(new String[]{fileInfo.url}, dest, fileInfo.sha1).run();
             } catch (Throwable e) {
-                if (e instanceof InterruptedIOException || e instanceof InterruptedException) {
+                if (!(e instanceof java.net.SocketTimeoutException)
+                        && (e instanceof InterruptedException || (e instanceof InterruptedIOException && Thread.currentThread().isInterrupted()))) {
                     downloadFailed(new InterruptedIOException("Interrupted"));
                 } else {
                     android.util.Log.w("ModDownloader", "Failed to query/download file: " + e.getMessage());
@@ -146,9 +147,14 @@ public class ModDownloader {
                     });
                     success = true;
                     break;
+                } catch (java.net.SocketTimeoutException e) {
+                    android.util.Log.w("ModDownloader", "Timeout downloading " + mDestination.getName() + " from " + sourceUrl + ": " + e.getMessage());
                 } catch (InterruptedIOException e) {
-                    downloadFailed(new InterruptedIOException("Interrupted"));
-                    return;
+                    if (Thread.currentThread().isInterrupted()) {
+                        downloadFailed(new InterruptedIOException("Interrupted"));
+                        return;
+                    }
+                    android.util.Log.w("ModDownloader", "I/O interrupted downloading " + mDestination.getName() + " from " + sourceUrl + ": " + e.getMessage());
                 } catch (Throwable e) {
                     android.util.Log.w("ModDownloader", "Failed to download " + mDestination.getName() + " from " + sourceUrl + ": " + e.getMessage());
                 }
@@ -166,8 +172,13 @@ public class ModDownloader {
                     DownloadUtils.downloadFileMonitored(sourceUrl, mDestination, getThreadLocalBuffer(), this);
                     if(mUseFileCount) mDownloadSize.addAndGet(1);
                     return null;
+                } catch (java.net.SocketTimeoutException e) {
+                    exception = e;
                 } catch (InterruptedIOException e) {
-                    throw new InterruptedException();
+                    if (Thread.currentThread().isInterrupted()) {
+                        throw new InterruptedException();
+                    }
+                    exception = e;
                 } catch (IOException e) {
                     exception = e;
                 }

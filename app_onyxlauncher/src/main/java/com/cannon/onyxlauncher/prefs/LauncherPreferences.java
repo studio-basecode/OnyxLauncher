@@ -60,7 +60,7 @@ public class LauncherPreferences {
     public static boolean PREF_BUTTON_ALL_CAPS = true;
     public static boolean PREF_DUMP_SHADERS = false;
     public static float PREF_DEADZONE_SCALE = 1f;
-    public static boolean PREF_BIG_CORE_AFFINITY = false;
+    public static boolean PREF_BIG_CORE_AFFINITY = true;
     public static boolean PREF_ZINK_PREFER_SYSTEM_DRIVER = false;
     
     public static boolean PREF_VERIFY_MANIFEST = true;
@@ -86,9 +86,9 @@ public class LauncherPreferences {
         PREF_CHECK_LIBRARY_SHA = DEFAULT_PREF.getBoolean("checkLibraries",true);
         PREF_DISABLE_GESTURES = DEFAULT_PREF.getBoolean("disableGestures",false);
         PREF_DISABLE_SWAP_HAND = DEFAULT_PREF.getBoolean("disableDoubleTap", false);
-        PREF_RAM_ALLOCATION = onyxPrefs.getInt("allocated_ram", DEFAULT_PREF.getInt("allocation", findBestRAMAllocation(ctx)));
+        PREF_RAM_ALLOCATION = Math.min(4096, onyxPrefs.getInt("allocated_ram", DEFAULT_PREF.getInt("allocation", findBestRAMAllocation(ctx))));
         PREF_CUSTOM_JAVA_ARGS = DEFAULT_PREF.getString("javaArgs", "");
-        PREF_SUSTAINED_PERFORMANCE = DEFAULT_PREF.getBoolean("sustainedPerformance", isDevicePowerful);
+        PREF_SUSTAINED_PERFORMANCE = false;
         PREF_VIRTUAL_MOUSE_START = DEFAULT_PREF.getBoolean("mouse_start", false);
         PREF_ARC_CAPES = DEFAULT_PREF.getBoolean("arc_capes",false);
         PREF_USE_ALTERNATE_SURFACE = DEFAULT_PREF.getBoolean("alternate_surface", isDevicePowerful);
@@ -100,11 +100,11 @@ public class LauncherPreferences {
         PREF_GYRO_SMOOTHING = DEFAULT_PREF.getBoolean("gyroSmoothing", true);
         PREF_GYRO_INVERT_X = DEFAULT_PREF.getBoolean("gyroInvertX", false);
         PREF_GYRO_INVERT_Y = DEFAULT_PREF.getBoolean("gyroInvertY", false);
-        PREF_FORCE_VSYNC = DEFAULT_PREF.getBoolean("force_vsync", isDevicePowerful);
+        PREF_FORCE_VSYNC = DEFAULT_PREF.getBoolean("force_vsync", false);
         PREF_BUTTON_ALL_CAPS = DEFAULT_PREF.getBoolean("buttonAllCaps", true);
         PREF_DUMP_SHADERS = DEFAULT_PREF.getBoolean("dump_shaders", false);
         PREF_DEADZONE_SCALE = ((float) DEFAULT_PREF.getInt("gamepad_deadzone_scale", 100))/100f;
-        PREF_BIG_CORE_AFFINITY = DEFAULT_PREF.getBoolean("bigCoreAffinity", false);
+        PREF_BIG_CORE_AFFINITY = DEFAULT_PREF.getBoolean("bigCoreAffinity", true);
         PREF_ZINK_PREFER_SYSTEM_DRIVER = DEFAULT_PREF.getBoolean("zinkPreferSystemDriver", false);
         PREF_DOWNLOAD_SOURCE = DEFAULT_PREF.getString("downloadSource", "default");
         PREF_VERIFY_MANIFEST = DEFAULT_PREF.getBoolean("verifyManifest", true);
@@ -135,7 +135,9 @@ public class LauncherPreferences {
         if (profile == null) return;
 
         if (profile.ramAllocation != null && profile.ramAllocation > 0) {
-            PREF_RAM_ALLOCATION = profile.ramAllocation;
+            int clampedRam = Math.min(profile.ramAllocation, 4096);
+            profile.ramAllocation = clampedRam;
+            PREF_RAM_ALLOCATION = clampedRam;
         }
         if (profile.resolutionScale != null && profile.resolutionScale > 0) {
             PREF_SCALE_FACTOR = profile.resolutionScale / 100f;
@@ -173,7 +175,7 @@ public class LauncherPreferences {
         if (deviceRam < 6144) return 2560;
         if (deviceRam < 8192) return 3584;
         if (deviceRam < 12288) return 4096;
-        return 6144; // Default RAM allocation for high-end 64 bits devices (12GB+ RAM)
+        return 4096; // Capped at 4096MB to keep total JVM+native anon memory under Samsung Heimdall 6.0GB kill limit
     }
 
     /// Find a correct resolution for the device
